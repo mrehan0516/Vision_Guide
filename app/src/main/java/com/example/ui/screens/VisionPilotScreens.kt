@@ -2442,6 +2442,12 @@ fun ProfilePage(viewModel: MainViewModel) {
         Spacer(modifier = Modifier.height(20.dp))
 
         // SECTION 3: PERMISSIONS MANAGEMENT
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val isCameraGranted by viewModel.isCameraGranted.collectAsState()
+        val isRecordAudioGranted by viewModel.isRecordAudioGranted.collectAsState()
+        val isAccessibilityActive by viewModel.isAccessibilityActive.collectAsState()
+        val isOverlayGranted by viewModel.isOverlayGranted.collectAsState()
+
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2458,9 +2464,10 @@ fun ProfilePage(viewModel: MainViewModel) {
                 Spacer(modifier = Modifier.height(16.dp))
 
                 val permissions = listOf(
-                    Pair("Screen Overlay Frame capture", "GRANTED"),
-                    Pair("Accessibility Automation capture", "GRANTED"),
-                    Pair("Hardware Back camera permission", "DENIED")
+                    Pair("Screen Overlay Frame capture", if (isOverlayGranted) "GRANTED" else "DENIED"),
+                    Pair("Accessibility Automation capture", if (isAccessibilityActive) "GRANTED" else "DENIED"),
+                    Pair("Hardware Back camera permission", if (isCameraGranted) "GRANTED" else "DENIED"),
+                    Pair("Vocal Microphone feed permission", if (isRecordAudioGranted) "GRANTED" else "DENIED")
                 )
 
                 permissions.forEach { (name, status) ->
@@ -2501,7 +2508,7 @@ fun ProfilePage(viewModel: MainViewModel) {
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
-                    onClick = { viewModel.triggerPermissionSync() },
+                    onClick = { viewModel.triggerPermissionSync(context) },
                     colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonBlue),
                     modifier = Modifier
                         .fillMaxWidth()

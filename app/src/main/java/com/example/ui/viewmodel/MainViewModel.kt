@@ -40,6 +40,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val mockClient = MockVisionPilotClient()
     private var speechToTextHelper: SpeechToTextHelper? = null
 
+    // Dynamic Permission States
+    private val _isCameraGranted = MutableStateFlow(false)
+    val isCameraGranted: StateFlow<Boolean> = _isCameraGranted.asStateFlow()
+
+    private val _isRecordAudioGranted = MutableStateFlow(false)
+    val isRecordAudioGranted: StateFlow<Boolean> = _isRecordAudioGranted.asStateFlow()
+
+    private val _isAccessibilityActive = MutableStateFlow(false)
+    val isAccessibilityActive: StateFlow<Boolean> = _isAccessibilityActive.asStateFlow()
+
+    private val _isOverlayGranted = MutableStateFlow(false)
+    val isOverlayGranted: StateFlow<Boolean> = _isOverlayGranted.asStateFlow()
+
     // Screen navigation flow
     private val _workflowState = MutableStateFlow(AppWorkflow.SPLASH)
     val workflowState: StateFlow<AppWorkflow> = _workflowState.asStateFlow()
@@ -109,6 +122,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var waveformAnimationJob: Job? = null
 
     init {
+        updatePermissionsState()
         // Trigger initial onboarding / routing delay
         viewModelScope.launch {
             delay(2000)
@@ -412,8 +426,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ttsHelper.setVoiceByName(language)
     }
 
-    fun triggerPermissionSync() {
-        ttsHelper.speak("Requesting overlay permission and accessibility capture handshake.")
+    fun updatePermissionsState() {
+        val context = getApplication<Application>()
+        
+        // 1. Camera check
+        _isCameraGranted.value = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.CAMERA
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        // 2. Microphone (Record Audio) check
+        _isRecordAudioGranted.value = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        // 3. Accessibility Service check
+        _isAccessibilityActive.value = isAccessibilityServiceEnabled(context)
+
+        // 4. Overlay check
+        _isOverlayGranted.value = android.provider.Settings.canDrawOverlays(context)
+    }
+
+    private fun isAccessibilityServiceEnabled(context: android.content.Context): Boolean {
+        val expectedComponentName = android.content.ComponentName(context, com.example.service.VisionPilotAccessibilityService::class.java)
+        val enabledServicesSetting = android.provider.Settings.Secure.getString(
+            context.contentResolver,
+            android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        val colonSplitter = android.text.TextUtils.SimpleStringSplitter(':')
+        colonSplitter.setString(enabledServicesSetting)
+        while (colonSplitter.hasNext()) {
+            val componentNameString = colonSplitter.next()
+            val enabledService = android.content.ComponentName.unflattenFromString(componentNameString)
+            if (enabledService != null && enabledService == expectedComponentName) {
+                return true
+            }
+        }
+        return false
+    }
+
+    fun triggerPermissionSync(context: android.content.Context) {
+        updatePermissionsState()
+        
+        if (!_isOverlayGranted.value) {
+            ttsHelper.speak("Overlay permission is disabled. Opening Overlay settings page. Please find Vision Pilot and click allow display over other apps.")
+            try {
+                val intent = android.content.Intent(
+                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:${context.packageName}")
+                ).apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                try {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_SETTINGS).apply {
+                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                } catch (ex: Exception) {}
+            }
+            return
+        }
+        
+        if (!_isAccessibilityActive.value) {
+            ttsHelper.speak("Accessibility automation is disabled. Opening settings. Please select installed services, find Vision Pilot, and toggle it on.")
+            try {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {}
+            return
+        }
+        
+        if (!_isCameraGranted.value || !_isRecordAudioGranted.value) {
+            ttsHelper.speak("Standard system permissions are missing. Please allow microphone and camera in the next prompts.")
+            return
+        }
+        
+        ttsHelper.speak("All system permissions are active. Vision Pilot is ready for screen and surroundings automation.")
     }
 
     fun clearLogHistory() {
