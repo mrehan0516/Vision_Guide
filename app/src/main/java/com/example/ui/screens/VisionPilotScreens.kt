@@ -1862,76 +1862,89 @@ fun ActivityPage(viewModel: MainViewModel) {
                     .testTag("activity_log_list")
             ) {
                 items(historyList) { item ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp)
-                            .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
-                        colors = CardDefaults.cardColors(containerColor = CardSlate),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.ChatBubbleOutline,
-                                        contentDescription = null,
-                                        tint = PrimaryNeonBlue,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = item.command,
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            color = SlateLightText,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-
-                                Text(
-                                    text = df.format(Date(item.timestamp)),
-                                    style = MaterialTheme.typography.labelSmall.copy(color = SlateMutedText)
+                    var isVisible by remember { mutableStateOf(false) }
+                    LaunchedEffect(key1 = item.timestamp) {
+                        isVisible = true
+                    }
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isVisible,
+                        enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(500)) + 
+                                androidx.compose.animation.slideInVertically(
+                                    animationSpec = androidx.compose.animation.core.tween(500),
+                                    initialOffsetY = { 60 }
                                 )
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            Text(
-                                text = item.response,
-                                style = MaterialTheme.typography.bodyLarge.copy(color = SlateLightText, lineHeight = 24.sp)
-                            )
-
-                            if (!item.error.isNullOrEmpty()) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(WarningRed.copy(alpha = 0.15f))
-                                        .padding(8.dp)
+                    ) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp)
+                                .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
+                            colors = CardDefaults.cardColors(containerColor = CardSlate),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(
-                                            imageVector = Icons.Default.ErrorOutline,
-                                            contentDescription = "Error notification",
-                                            tint = WarningRed,
+                                            imageVector = Icons.Default.ChatBubbleOutline,
+                                            contentDescription = null,
+                                            tint = PrimaryNeonBlue,
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = item.error,
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                color = WarningRed,
+                                            text = item.command,
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                color = SlateLightText,
                                                 fontWeight = FontWeight.Bold
-                                            )
+                                            ),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
+                                    }
+
+                                    Text(
+                                        text = df.format(Date(item.timestamp)),
+                                        style = MaterialTheme.typography.labelSmall.copy(color = SlateMutedText)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Text(
+                                    text = item.response,
+                                    style = MaterialTheme.typography.bodyLarge.copy(color = SlateLightText, lineHeight = 24.sp)
+                                )
+
+                                if (!item.error.isNullOrEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(WarningRed.copy(alpha = 0.15f))
+                                            .padding(8.dp)
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.ErrorOutline,
+                                                contentDescription = "Error notification",
+                                                tint = WarningRed,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = item.error,
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    color = WarningRed,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            )
+                                        }
                                     }
                                 }
                             }

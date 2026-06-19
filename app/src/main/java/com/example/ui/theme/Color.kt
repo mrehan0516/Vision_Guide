@@ -1,21 +1,59 @@
 package com.example.ui.theme
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 
-val OLEDBlack = Color(0xFF121212) // Slate dark body canvas
-val DarkGreyBg = Color(0xFF1C1B1F) // Deep tactile container base
-val CardSlate = Color(0xFF2B2930) // Elevated card base
-val CardBorder = Color(0xFF49454F) // High-contrast structural boundaries
+// Observable flag for theme state. Switches between requested Sand and Green themes.
+// Default theme MUST be Light Mode as per user request.
+var isThemeAmbientDark by mutableStateOf(false)
 
-val PrimaryNeonBlue = Color(0xFFD0BCFF) // Accent lavender primary
-val SecondaryNeonCyan = Color(0xFFEADDFF) // Muted lavender highlights
-val PulseVocalCyan = Color(0xFFD0BCFF) // Vocal helper
-val AccentuatingGreen = Color(0xFFB2FF59) // Electric high-contrast connected state green
-val StatusOfflineGrey = Color(0xFF6B7280)
-val WarningRed = Color(0xFFF2B8B5) // M3 error highlight
+// Custom Color Palette:
+// #99cc66 -> Soft Olive Green (Primary)
+// #254222 -> Deep Forest Green (Text / Dark Bg)
+// #ece2b1 -> Warm Sand Cream (Light Bg)
+// #cae4c5 -> Pastel Sage Green (Elevated glass card)
 
-val SlateLightText = Color(0xFFE6E1E5) // Clean off-white accessible text
-val SlateMutedText = Color(0xFFCAC4D0) // Medium contrast grey secondary
-val DeepContrastingText = Color(0xFF381E72) // Primary contrast inner text
-val VeryDeepPurpleBg = Color(0xFF21005D) // Accent background
+// Dynamic theme color getters satisfying both light & dark look-and-feels:
+val OLEDBlack: Color 
+    get() = if (isThemeAmbientDark) Color(0xFF1D291D) else Color(0xFFECE2B1) // Dark forest green / warm sand canvas
 
+val DarkGreyBg: Color 
+    get() = if (isThemeAmbientDark) Color(0xFF121B12) else Color(0xFFE2D6A2) // Ambient canvas bases
+
+val CardSlate: Color 
+    get() = if (isThemeAmbientDark) Color(0xFF254222).copy(alpha = 0.85f) else Color(0xFFCAE4C5).copy(alpha = 0.85f) // Glassmorphism container layer
+
+val CardBorder: Color 
+    get() = if (isThemeAmbientDark) Color(0xFF99CC66).copy(alpha = 0.5f) else Color(0xFF99CC66).copy(alpha = 0.6f) // High refractive frosted boundaries
+
+val PrimaryNeonBlue: Color 
+    get() = if (isThemeAmbientDark) Color(0xFF99CC66) else Color(0xFF254222) // Primary contrast brand color
+
+val SecondaryNeonCyan: Color 
+    get() = if (isThemeAmbientDark) Color(0xFFCAE4C5) else Color(0xFF254222) // Secondary action keys
+
+val PulseVocalCyan: Color 
+    get() = if (isThemeAmbientDark) Color(0xFF99CC66) else Color(0xFF254222) // Adaptive voice brand accent
+
+val AccentuatingGreen: Color 
+    get() = if (isThemeAmbientDark) Color(0xFF99CC66) else Color(0xFF254222) // Contrast indicators
+
+val StatusOfflineGrey: Color 
+    get() = Color(0xFF7F8C7F)
+
+val WarningRed: Color 
+    get() = Color(0xFFB3261E) // Safe warning tone
+
+val SlateLightText: Color 
+    get() = if (isThemeAmbientDark) Color(0xFFECE2B1) else Color(0xFF254222) // Slate-balanced high-contrast reading text
+
+val SlateMutedText: Color 
+    get() = if (isThemeAmbientDark) Color(0xFFCAE4C5).copy(alpha = 0.8f) else Color(0xFF254222).copy(alpha = 0.7f) // Subtitles
+
+val DeepContrastingText: Color 
+    get() = if (isThemeAmbientDark) Color(0xFF254222) else Color(0xFFECE2B1) // Readable inner button labels
+
+val VeryDeepPurpleBg: Color 
+    get() = if (isThemeAmbientDark) Color(0xFF152215) else Color(0xFFECE2B1)

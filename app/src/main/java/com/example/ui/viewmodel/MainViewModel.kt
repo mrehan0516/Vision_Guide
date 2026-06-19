@@ -80,7 +80,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val lastActionExecuted: StateFlow<String> = _lastActionExecuted.asStateFlow()
 
     // Settings Configuration
-    private val _isDarkMode = MutableStateFlow(true)
+    private val _isDarkMode = MutableStateFlow(false)
     val isDarkMode: StateFlow<Boolean> = _isDarkMode.asStateFlow()
 
     private val _isAccessibilityEnabled = MutableStateFlow(true)
