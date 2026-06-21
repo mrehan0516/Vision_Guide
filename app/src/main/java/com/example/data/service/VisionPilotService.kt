@@ -3,9 +3,11 @@ package com.example.data.service
 import kotlinx.coroutines.delay
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.GET
 import retrofit2.http.POST
 
-// Data classes for request and response payloads
+// ── Existing request/response payloads ──────────────────────────────
+
 data class VoiceCommandRequest(val audioBase64: String, val timestamp: Long)
 data class VoiceCommandResponse(val recognizedText: String, val responseSpeech: String, val executeAction: Boolean)
 
@@ -28,8 +30,54 @@ data class CameraFrameResponse(val sceneDescription: String, val objectsCount: I
 data class ActionExecutionRequest(val actionType: String, val targetSelector: String, val argValue: String? = null)
 data class ActionExecutionResponse(val success: Boolean, val errorReason: String? = null)
 
+// ── Agent request/response payloads ─────────────────────────────────
+
+data class AgentGoalRequest(val goal: String)
+data class AgentPlanResponse(
+    val goal: String,
+    val steps: List<String>,
+    val totalSteps: Int,
+    val narration: String
+)
+
+data class AgentStepRequest(
+    val success: Boolean,
+    val screenElementsJson: String = "[]",
+    val screenDescription: String = "",
+    val screenshotBase64: String = "",  // Screenshot for vision fallback
+    val error: String = ""
+)
+
+data class AgentConfirmRequest(val approved: Boolean)
+
+data class AgentActionResponse(
+    val action: String,       // "tap", "type_text", "open_app", "scroll_down", "press_back", "done", "fail", "confirm", etc.
+    val target: String,
+    val value: String,
+    val narration: String,
+    val x: Int,
+    val y: Int,
+    val confidence: Double,
+    val planStatus: String,   // "executing", "awaiting_confirmation", "completed", "failed"
+    val currentStep: Int,
+    val totalSteps: Int,
+    val requiresConfirmation: Boolean = false,
+    val confirmationMessage: String = ""
+)
+
+data class AgentStatusResponse(
+    val hasActivePlan: Boolean,
+    val goal: String,
+    val status: String,
+    val currentStep: Int,
+    val totalSteps: Int,
+    val narration: String,
+    val actionsExecuted: Int,
+    val memoryContext: String = ""
+)
+
 /**
- * Service representing real, integration-ready REST endpoints for VisionPilot.
+ * Retrofit service — all REST endpoints including the new agent routes.
  */
 interface VisionPilotService {
     @POST("/voice-command")
@@ -43,14 +91,32 @@ interface VisionPilotService {
 
     @POST("/execute-action")
     suspend fun executeAction(@Body request: ActionExecutionRequest): Response<ActionExecutionResponse>
+
+    // ── Agent endpoints ─────────────────────────────────────────
+    @POST("/agent/plan")
+    suspend fun agentPlan(@Body request: AgentGoalRequest): Response<AgentPlanResponse>
+
+    @POST("/agent/next-action")
+    suspend fun agentNextAction(@Body request: AgentStepRequest): Response<AgentActionResponse>
+
+    @GET("/agent/status")
+    suspend fun agentStatus(): Response<AgentStatusResponse>
+
+    @POST("/agent/confirm")
+    suspend fun agentConfirm(@Body request: AgentConfirmRequest): Response<AgentActionResponse>
+
+    @POST("/agent/reset")
+    suspend fun agentReset(): Response<Map<String, String>>
 }
 
 /**
- * Mock interface client implementation showing exactly how WebSocket connection and REST calls operate
- * asynchronously in VisionPilot, providing simulated realistic latency, data variations, and hooks.
+ * Mock client that simulates the agent flow locally when the backend is unreachable.
+ * Now includes agentic plan/step simulation so the app can demo the full flow offline.
  */
 class MockVisionPilotClient {
     private var webSocketConnected = false
+    private var mockPlanSteps: List<String> = emptyList()
+    private var mockCurrentStep = 0
 
     fun getWebSocketUrl(): String = "ws://agent/connect"
 
@@ -63,7 +129,7 @@ class MockVisionPilotClient {
         webSocketConnected = true
         onConnected()
         delay(500)
-        onMessageReceived("Welcome to standard VisionPilot agent connection stream on ws://agent/connect.")
+        onMessageReceived("VisionPilot agent connected. Ready for voice commands.")
     }
 
     suspend fun disconnectWebSocket() {
@@ -72,32 +138,131 @@ class MockVisionPilotClient {
     }
 
     suspend fun mockSendVoiceCommand(spokenText: String): VoiceCommandResponse {
+        delay(800)
+        return VoiceCommandResponse(
+            recognizedText = spokenText,
+            responseSpeech = "Got it: '$spokenText'. Let me plan the steps for you.",
+            executeAction = true
+        )
+    }
+
+    suspend fun mockPlanGoal(goal: String): AgentPlanResponse {
         delay(1000)
-        return when (spokenText.lowercase().trim()) {
-            "call mom" -> VoiceCommandResponse(
-                recognizedText = "Call Mom",
-                responseSpeech = "Calling Mom right away.",
-                executeAction = true
+        val steps = when {
+            "search" in goal.lowercase() && "google" in goal.lowercase() -> listOf(
+                "Open Chrome browser",
+                "Tap the search bar",
+                "Type the search query",
+                "Tap Search on keyboard",
+                "Wait for results to load"
             )
-            "open whatsapp" -> VoiceCommandResponse(
-                recognizedText = "Open WhatsApp",
-                responseSpeech = "Opening WhatsApp Messenger.",
-                executeAction = true
+            "open" in goal.lowercase() -> {
+                val app = goal.lowercase().substringAfter("open").trim()
+                listOf("Open the $app app", "Wait for $app to load")
+            }
+            "call" in goal.lowercase() -> {
+                val contact = goal.lowercase().substringAfter("call").trim()
+                listOf("Open Phone app", "Search for $contact", "Tap $contact", "Tap call button")
+            }
+            else -> listOf("Analyze screen", "Execute: $goal")
+        }
+        mockPlanSteps = steps
+        mockCurrentStep = 0
+        return AgentPlanResponse(
+            goal = goal,
+            steps = steps,
+            totalSteps = steps.size,
+            narration = "I'll help you $goal. I've planned ${steps.size} steps."
+        )
+    }
+
+    suspend fun mockNextAction(success: Boolean): AgentActionResponse {
+        delay(600)
+        if (!success && mockCurrentStep > 0) {
+            return AgentActionResponse(
+                action = "wait",
+                target = "",
+                value = "",
+                narration = "That didn't work. Let me try again.",
+                x = 0, y = 0,
+                confidence = 0.7,
+                planStatus = "executing",
+                currentStep = mockCurrentStep,
+                totalSteps = mockPlanSteps.size
             )
-            "read this screen" -> VoiceCommandResponse(
-                recognizedText = "Read this screen",
-                responseSpeech = "Identified three interactive elements: 'Send' button, 'Call' button, and a layout page title.",
-                executeAction = false
+        }
+
+        if (mockCurrentStep >= mockPlanSteps.size) {
+            return AgentActionResponse(
+                action = "done",
+                target = "",
+                value = "",
+                narration = "All steps completed successfully!",
+                x = 0, y = 0,
+                confidence = 1.0,
+                planStatus = "completed",
+                currentStep = mockCurrentStep,
+                totalSteps = mockPlanSteps.size
             )
-            "describe surroundings" -> VoiceCommandResponse(
-                recognizedText = "Describe surroundings",
-                responseSpeech = "Detected a cozy desk space containing a computer, laptop, coffee cup, and balanced light.",
-                executeAction = false
+        }
+
+        val step = mockPlanSteps[mockCurrentStep]
+        mockCurrentStep++
+
+        // Simulate confirmation for risky steps
+        val riskyKeywords = listOf("password", "sign in", "log in", "post", "comment", "send", "pay")
+        val needsConfirm = riskyKeywords.any { step.lowercase().contains(it) }
+
+        val action = when {
+            needsConfirm -> "confirm"
+            step.lowercase().startsWith("open") -> "open_app"
+            step.lowercase().contains("tap") || step.lowercase().contains("click") -> "tap"
+            step.lowercase().startsWith("type") || step.lowercase().contains("search for") -> "type_text"
+            step.lowercase().contains("wait") -> "wait"
+            step.lowercase().contains("scroll") -> "scroll_down"
+            else -> "tap"
+        }
+
+        return AgentActionResponse(
+            action = action,
+            target = step,
+            value = if (action == "type_text") step.substringAfter(":").trim().ifEmpty { step.substringAfter("for").trim() } else "",
+            narration = if (needsConfirm) "I need your permission: $step. Should I proceed?" else "Step ${mockCurrentStep} of ${mockPlanSteps.size}: $step",
+            x = 540, y = 960,
+            confidence = 0.9,
+            planStatus = if (needsConfirm) "awaiting_confirmation" else "executing",
+            currentStep = mockCurrentStep,
+            totalSteps = mockPlanSteps.size,
+            requiresConfirmation = needsConfirm,
+            confirmationMessage = if (needsConfirm) "I'm about to: $step. Should I proceed?" else ""
+        )
+    }
+
+    suspend fun mockConfirm(approved: Boolean): AgentActionResponse {
+        delay(400)
+        return if (approved) {
+            AgentActionResponse(
+                action = "tap",
+                target = "Proceeding with approved action",
+                value = "",
+                narration = "Permission granted. Continuing.",
+                x = 540, y = 960,
+                confidence = 1.0,
+                planStatus = "executing",
+                currentStep = mockCurrentStep,
+                totalSteps = mockPlanSteps.size
             )
-            else -> VoiceCommandResponse(
-                recognizedText = spokenText,
-                responseSpeech = "Understood command: '$spokenText'. Initiating Remote Agent workflow.",
-                executeAction = true
+        } else {
+            AgentActionResponse(
+                action = "wait",
+                target = "",
+                value = "",
+                narration = "Understood. Skipping that step.",
+                x = 0, y = 0,
+                confidence = 1.0,
+                planStatus = "executing",
+                currentStep = mockCurrentStep,
+                totalSteps = mockPlanSteps.size
             )
         }
     }

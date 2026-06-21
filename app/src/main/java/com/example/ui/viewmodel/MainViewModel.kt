@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
 import com.example.data.database.CommandHistoryEntity
 import com.example.data.repository.CommandHistoryRepository
+import com.example.data.service.AgentActionResponse
 import com.example.data.service.DetectedUiElement
 import com.example.data.service.MockVisionPilotClient
 import com.example.data.tts.TextToSpeechHelper
@@ -91,6 +92,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Device actions stubs output
     private val _lastActionExecuted = MutableStateFlow("")
     val lastActionExecuted: StateFlow<String> = _lastActionExecuted.asStateFlow()
+
+    // Agent state
+    private val _agentNarration = MutableStateFlow("")
+    val agentNarration: StateFlow<String> = _agentNarration.asStateFlow()
+
+    private val _agentPlanSteps = MutableStateFlow<List<String>>(emptyList())
+    val agentPlanSteps: StateFlow<List<String>> = _agentPlanSteps.asStateFlow()
+
+    private val _agentCurrentStep = MutableStateFlow(0)
+    val agentCurrentStep: StateFlow<Int> = _agentCurrentStep.asStateFlow()
+
+    private val _agentIsRunning = MutableStateFlow(false)
+    val agentIsRunning: StateFlow<Boolean> = _agentIsRunning.asStateFlow()
 
     // Settings Configuration
     private val _isDarkMode = MutableStateFlow(false)
@@ -275,11 +289,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val inputQuery = _spokenInputText.value
             val response = mockClient.mockSendVoiceCommand(inputQuery)
-            
-            _assistantStatus.value = AssistantStatus.CONNECTED
+
             ttsHelper.speak(response.responseSpeech)
 
-            // Save command log into the Room database
             repository.insert(
                 CommandHistoryEntity(
                     command = response.recognizedText,
@@ -287,6 +299,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     error = null
                 )
             )
+
+            if (response.executeAction) {
+                // Hand off to the agent for multi-step execution
+                runAgentGoal(inputQuery)
+            } else {
+                _assistantStatus.value = AssistantStatus.CONNECTED
+            }
         }
     }
 
@@ -531,5 +550,160 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             )
         }
+    }
+
+    // ── Agent flow ──────────────────────────────────────────────
+
+    private val _agentAwaitingConfirmation = MutableStateFlow(false)
+    val agentAwaitingConfirmation: StateFlow<Boolean> = _agentAwaitingConfirmation.asStateFlow()
+
+    private val _agentConfirmationMessage = MutableStateFlow("")
+    val agentConfirmationMessage: StateFlow<String> = _agentConfirmationMessage.asStateFlow()
+
+    fun runAgentGoal(goal: String) {
+        viewModelScope.launch {
+            _agentIsRunning.value = true
+            _agentAwaitingConfirmation.value = false
+            _assistantStatus.value = AssistantStatus.PROCESSING
+
+            ttsHelper.speak("Planning steps for: $goal")
+
+            val plan = mockClient.mockPlanGoal(goal)
+            _agentPlanSteps.value = plan.steps
+            _agentCurrentStep.value = 0
+            _agentNarration.value = plan.narration
+
+            ttsHelper.speak(plan.narration)
+
+            repository.insert(
+                CommandHistoryEntity(
+                    command = "Agent Goal: $goal",
+                    response = "Plan: ${plan.steps.joinToString(" → ")}",
+                    error = null
+                )
+            )
+
+            // Execute steps one by one
+            var stepSuccess = true
+            while (_agentIsRunning.value) {
+                val actionResp = mockClient.mockNextAction(stepSuccess)
+                _agentCurrentStep.value = actionResp.currentStep
+                _agentNarration.value = actionResp.narration
+
+                ttsHelper.speak(actionResp.narration)
+
+                _lastActionExecuted.value = "Agent [${actionResp.action}]: ${actionResp.target}"
+
+                repository.insert(
+                    CommandHistoryEntity(
+                        command = "Agent Step: ${actionResp.action}",
+                        response = actionResp.narration,
+                        error = null
+                    )
+                )
+
+                // Handle confirmation-required actions
+                if (actionResp.requiresConfirmation || actionResp.action == "confirm") {
+                    _agentAwaitingConfirmation.value = true
+                    _agentConfirmationMessage.value = actionResp.confirmationMessage.ifEmpty { actionResp.narration }
+                    _assistantStatus.value = AssistantStatus.CONFIRMING
+                    ttsHelper.speak(actionResp.confirmationMessage.ifEmpty { "I need your permission to continue. Say yes or no." })
+                    // Pause execution — will resume via approveAgentAction() or denyAgentAction()
+                    return@launch
+                }
+
+                if (actionResp.planStatus == "completed" || actionResp.planStatus == "failed" ||
+                    actionResp.action == "done" || actionResp.action == "fail") {
+                    break
+                }
+
+                // Simulate action execution delay
+                delay(1500)
+                stepSuccess = true
+            }
+
+            _agentIsRunning.value = false
+            _assistantStatus.value = AssistantStatus.CONNECTED
+            ttsHelper.speak("Agent task completed.")
+        }
+    }
+
+    fun approveAgentAction() {
+        viewModelScope.launch {
+            _agentAwaitingConfirmation.value = false
+            _assistantStatus.value = AssistantStatus.PROCESSING
+            ttsHelper.speak("Permission granted. Continuing.")
+
+            val resp = mockClient.mockConfirm(approved = true)
+            _agentNarration.value = resp.narration
+            _lastActionExecuted.value = "Agent [confirmed]: ${resp.target}"
+
+            // Resume agent execution loop
+            delay(1000)
+            resumeAgentLoop()
+        }
+    }
+
+    fun denyAgentAction() {
+        viewModelScope.launch {
+            _agentAwaitingConfirmation.value = false
+            _assistantStatus.value = AssistantStatus.PROCESSING
+            ttsHelper.speak("Understood. Skipping that step.")
+
+            val resp = mockClient.mockConfirm(approved = false)
+            _agentNarration.value = resp.narration
+
+            // Resume agent execution loop (will go to next step)
+            delay(800)
+            resumeAgentLoop()
+        }
+    }
+
+    private fun resumeAgentLoop() {
+        viewModelScope.launch {
+            while (_agentIsRunning.value) {
+                val actionResp = mockClient.mockNextAction(true)
+                _agentCurrentStep.value = actionResp.currentStep
+                _agentNarration.value = actionResp.narration
+
+                ttsHelper.speak(actionResp.narration)
+                _lastActionExecuted.value = "Agent [${actionResp.action}]: ${actionResp.target}"
+
+                repository.insert(
+                    CommandHistoryEntity(
+                        command = "Agent Step: ${actionResp.action}",
+                        response = actionResp.narration,
+                        error = null
+                    )
+                )
+
+                if (actionResp.requiresConfirmation || actionResp.action == "confirm") {
+                    _agentAwaitingConfirmation.value = true
+                    _agentConfirmationMessage.value = actionResp.confirmationMessage.ifEmpty { actionResp.narration }
+                    _assistantStatus.value = AssistantStatus.CONFIRMING
+                    ttsHelper.speak(actionResp.confirmationMessage.ifEmpty { "I need your permission. Say yes or no." })
+                    return@launch
+                }
+
+                if (actionResp.planStatus == "completed" || actionResp.planStatus == "failed" ||
+                    actionResp.action == "done" || actionResp.action == "fail") {
+                    break
+                }
+
+                delay(1500)
+            }
+
+            _agentIsRunning.value = false
+            _assistantStatus.value = AssistantStatus.CONNECTED
+            ttsHelper.speak("Agent task completed.")
+        }
+    }
+
+    fun stopAgent() {
+        _agentIsRunning.value = false
+        _agentAwaitingConfirmation.value = false
+        _agentNarration.value = "Agent stopped by user."
+        _assistantStatus.value = AssistantStatus.CONNECTED
+        ttsHelper.speak("Agent stopped.")
     }
 }
