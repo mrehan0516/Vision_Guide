@@ -6,7 +6,10 @@ import android.speech.tts.Voice
 import android.util.Log
 import java.util.Locale
 
-class TextToSpeechHelper(context: Context) : TextToSpeech.OnInitListener {
+class TextToSpeechHelper(
+    context: Context,
+    private val onSpeechStatusChanged: ((Boolean) -> Unit)? = null
+) : TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = TextToSpeech(context.applicationContext, this)
     private var isInitialized = false
     private var pendingRate: Float = 1.0f
@@ -20,6 +23,19 @@ class TextToSpeechHelper(context: Context) : TextToSpeech.OnInitListener {
                 Log.e("TextToSpeechHelper", "US language pack missing or not supported")
             } else {
                 isInitialized = true
+                tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        onSpeechStatusChanged?.invoke(true)
+                    }
+
+                    override fun onDone(utteranceId: String?) {
+                        onSpeechStatusChanged?.invoke(false)
+                    }
+
+                    override fun onError(utteranceId: String?) {
+                        onSpeechStatusChanged?.invoke(false)
+                    }
+                })
                 // Apply any pending parameters set before initialization finished
                 setSpeechRate(pendingRate)
                 setPitch(pendingPitch)
@@ -77,7 +93,7 @@ class TextToSpeechHelper(context: Context) : TextToSpeech.OnInitListener {
                 val locale = when (voiceName) {
                     "English UK Voice" -> Locale.UK
                     "English Canada Voice" -> Locale.CANADA
-                    "English India Voice" -> Locale.getISOLanguages().firstOrNull { it == "hin" }?.let { Locale("en", "IN") } ?: Locale.US
+                    "English India Voice" -> java.util.Locale.Builder().setLanguage("en").setRegion("IN").build()
                     else -> Locale.US
                 }
                 tts?.setLanguage(locale)

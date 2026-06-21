@@ -4,6 +4,7 @@ plugins {
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.roborazzi)
   alias(libs.plugins.secrets)
+  alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -18,6 +19,15 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    
+    val fAppId = System.getenv("FIREBASE_APP_ID")?.replace("\"", "") ?: "YOUR_FIREBASE_APP_ID"
+    buildConfigField("String", "FIREBASE_APP_ID", "\"${fAppId}\"")
+
+    val googleClientId = System.getenv("GOOGLE_WEB_CLIENT_ID")?.replace("\"", "") ?: "YOUR_GOOGLE_WEB_CLIENT_ID"
+    buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${googleClientId}\"")
+    
+    val fProjectId = System.getenv("FIREBASE_PROJECT_ID")?.replace("\"", "") ?: "YOUR_FIREBASE_PROJECT_ID"
+    buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${fProjectId}\"")
   }
 
   signingConfigs {
@@ -63,6 +73,9 @@ android {
 secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
+  ignoreList.add("FIREBASE_APP_ID")
+  ignoreList.add("GOOGLE_WEB_CLIENT_ID")
+  ignoreList.add("FIREBASE_PROJECT_ID")
 }
 
 // Some unused dependencies are commented out below instead of being removed.
@@ -75,6 +88,9 @@ dependencies {
   implementation(libs.androidx.camera.camera2)
   implementation(libs.androidx.camera.core)
   implementation(libs.androidx.camera.lifecycle)
+  implementation("androidx.credentials:credentials:1.2.2")
+  implementation("androidx.credentials:credentials-play-services-auth:1.2.2")
+  implementation("com.google.android.libraries.identity.googleid:googleid:1.1.0")
   implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
@@ -93,6 +109,9 @@ dependencies {
   // implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)
+  implementation(libs.firebase.auth)
+  implementation(libs.firebase.firestore)
+  implementation(libs.play.services.auth)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.logging.interceptor)
@@ -100,6 +119,8 @@ dependencies {
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
+  implementation(libs.kotlinx.serialization.json)
+  implementation(libs.retrofit.converter.serialization)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

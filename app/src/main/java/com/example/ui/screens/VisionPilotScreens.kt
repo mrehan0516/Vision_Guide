@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -52,6 +53,7 @@ import com.example.ui.theme.*
 import com.example.ui.viewmodel.*
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.launch
 
 @Composable
 fun VisionPilotApp(viewModel: MainViewModel) {
@@ -322,20 +324,44 @@ fun OnboardingContent(page: Int) {
 // ================= LOGIN SCREEN =================
 @Composable
 fun LoginScreen(viewModel: MainViewModel) {
+    var activeAuthTab by remember { mutableStateOf(0) } // 0: Email, 1: Phone, 2: Google, 3: Guest
+    var isSignUpMode by remember { mutableStateOf(false) }
+
+    // Email states
+    var emailInput by remember { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
+    var nameInput by remember { mutableStateOf("") }
+    var confirmPasswordInput by remember { mutableStateOf("") }
+    var emailError by remember { mutableStateOf<String?>(null) }
+
+    // Phone states
+    var phoneInput by remember { mutableStateOf("") }
+    var otpSentCode by remember { mutableStateOf<String?>(null) }
+    var otpInput by remember { mutableStateOf("") }
+    var isOtpVerifying by remember { mutableStateOf(false) }
+
+    val coroutineScope = rememberCoroutineScope()
+    val localContext = androidx.compose.ui.platform.LocalContext.current
+
+    // Google Choice list sheet dialog
+    var showGoogleChooser by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(OLEDBlack)
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(24.dp)
-            .semantics { contentDescription = "Authentication flow" },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp)
+            .semantics { contentDescription = "Security Access Portal" },
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Spacer(modifier = Modifier.height(16.dp))
+
         Box(
             modifier = Modifier
-                .size(90.dp)
+                .size(72.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(CardSlate),
             contentAlignment = Alignment.Center
@@ -344,86 +370,562 @@ fun LoginScreen(viewModel: MainViewModel) {
                 imageVector = Icons.Default.VpnKey,
                 contentDescription = null,
                 tint = PrimaryNeonBlue,
-                modifier = Modifier.size(48.dp)
+                modifier = Modifier.size(36.dp)
             )
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "VisionPilot Portal",
+            style = MaterialTheme.typography.headlineLarge.copy(
+                color = SlateLightText,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 1.sp
+            ),
+            textAlign = TextAlign.Center
+        )
+
+        Text(
+            text = "Establish secure credentials link to connect screen automation",
+            style = MaterialTheme.typography.bodyMedium.copy(color = SlateMutedText),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+        )
+
         Spacer(modifier = Modifier.height(24.dp))
-        Text(
-            text = "Welcome to VisionPilot",
-            style = MaterialTheme.typography.displayMedium.copy(color = SlateLightText),
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "Connect with your secure remote agent client",
-            style = MaterialTheme.typography.bodyLarge.copy(color = SlateMutedText),
-            textAlign = TextAlign.Center
-        )
 
-        Spacer(modifier = Modifier.height(48.dp))
-
-        // Button Cards
-        Card(
+        // AUTHENTICATION TAB CONTROLLERS
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .shadow(8.dp, RoundedCornerShape(24.dp))
-                .border(2.dp, CardBorder, RoundedCornerShape(24.dp)),
-            colors = CardDefaults.cardColors(containerColor = CardSlate),
-            shape = RoundedCornerShape(24.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(CardSlate)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Button(
-                    onClick = { viewModel.login(isGuest = false) },
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonBlue),
+            val tabsLabel = listOf("EMAIL", "PHONE", "GOOGLE", "GUEST")
+            tabsLabel.forEachIndexed { index, title ->
+                val isSelected = activeAuthTab == index
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .testTag("google_login_button"),
-                    shape = RoundedCornerShape(16.dp)
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isSelected) PrimaryNeonBlue else Color.Transparent)
+                        .semantics { 
+                            contentDescription = "Select \$title authentication tab"
+                        }
+                        .clickable {
+                            activeAuthTab = index
+                            val speakText = when (index) {
+                                0 -> "Selected email authentication credentials entry."
+                                1 -> "Selected phone verification and code entry."
+                                2 -> "Selected Google single sign-on hub chooser."
+                                else -> "Selected secure localized client guest entry."
+                            }
+                            viewModel.ttsHelper.speak(speakText)
+                        }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.AccountCircle,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = "SIGN IN WITH GOOGLE",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedButton(
-                    onClick = { viewModel.login(isGuest = true) },
-                    border = BorderStroke(1.5.dp, CardBorder),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SlateLightText),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .testTag("guest_mode_button"),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DirectionsWalk,
-                        contentDescription = null,
-                        tint = SlateLightText
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        text = "Continue as Guest",
-                        style = MaterialTheme.typography.titleMedium.copy(
+                        text = title,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            color = if (isSelected) OLEDBlack else SlateMutedText,
                             fontWeight = FontWeight.Bold
                         )
                     )
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // DYNAMIC CONTENT ACCORDING TO AUTH TAB
+        when (activeAuthTab) {
+            0 -> {
+                // EMAIL & PASSWORD PANEL (SIGN IN / SIGN UP)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.5.dp, CardBorder, RoundedCornerShape(24.dp)),
+                    colors = CardDefaults.cardColors(containerColor = CardSlate),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text(
+                            text = if (isSignUpMode) "CREATE NEW ACCOUNT" else "SECURE EMAIL LOGIN",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = PulseVocalCyan,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.5.sp
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        if (isSignUpMode) {
+                            OutlinedTextField(
+                                value = nameInput,
+                                onValueChange = { nameInput = it },
+                                label = { Text("Display Name") },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = PrimaryNeonBlue,
+                                    unfocusedBorderColor = CardBorder,
+                                    focusedLabelColor = PrimaryNeonBlue,
+                                    unfocusedLabelColor = SlateMutedText,
+                                    focusedTextColor = SlateLightText,
+                                    unfocusedTextColor = SlateLightText
+                                ),
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("auth_name_field"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+
+                        OutlinedTextField(
+                            value = emailInput,
+                            onValueChange = {
+                                emailInput = it
+                                emailError = null
+                            },
+                            label = { Text("Email Address") },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = PrimaryNeonBlue,
+                                unfocusedBorderColor = CardBorder,
+                                focusedLabelColor = PrimaryNeonBlue,
+                                unfocusedLabelColor = SlateMutedText,
+                                focusedTextColor = SlateLightText,
+                                unfocusedTextColor = SlateLightText
+                            ),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("auth_email_field"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        if (emailError != null) {
+                            Text(
+                                text = emailError!!,
+                                color = WarningRed,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        OutlinedTextField(
+                            value = passwordInput,
+                            onValueChange = { passwordInput = it },
+                            label = { Text("Secret Password") },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = PrimaryNeonBlue,
+                                unfocusedBorderColor = CardBorder,
+                                focusedLabelColor = PrimaryNeonBlue,
+                                unfocusedLabelColor = SlateMutedText,
+                                focusedTextColor = SlateLightText,
+                                unfocusedTextColor = SlateLightText
+                            ),
+                            singleLine = true,
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("auth_password_field"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        if (isSignUpMode) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = confirmPasswordInput,
+                                onValueChange = { confirmPasswordInput = it },
+                                label = { Text("Confirm Password") },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = PrimaryNeonBlue,
+                                    unfocusedBorderColor = CardBorder,
+                                    focusedLabelColor = PrimaryNeonBlue,
+                                    unfocusedLabelColor = SlateMutedText,
+                                    focusedTextColor = SlateLightText,
+                                    unfocusedTextColor = SlateLightText
+                                ),
+                                singleLine = true,
+                                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("auth_confirm_password_field"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Button(
+                            onClick = {
+                                if (emailInput.isBlank() || !emailInput.contains("@")) {
+                                    emailError = "Please input a valid email registration"
+                                    viewModel.ttsHelper.speak("Incorrect email format check. Please revalidate input fields.")
+                                    return@Button
+                                }
+                                if (passwordInput.length < 5) {
+                                    viewModel.ttsHelper.speak("Password is too brief. Standard security requirement is at least five characters.")
+                                    return@Button
+                                }
+                                if (isSignUpMode) {
+                                    if (passwordInput != confirmPasswordInput) {
+                                        viewModel.ttsHelper.speak("Password confirmations missmatch. Recheck security fields.")
+                                        return@Button
+                                    }
+                                    viewModel.createNewAccount(emailInput, nameInput.ifBlank { "User" })
+                                } else {
+                                    viewModel.loginWithSession(emailInput, emailInput.substringBefore("@"), "Secure Email Auth")
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonBlue),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .testTag("email_auth_submit_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = if (isSignUpMode) "REGISTER & SETUP" else "ACCOUNT LOGIN",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        TextButton(
+                            onClick = {
+                                isSignUpMode = !isSignUpMode
+                                val prompt = if (isSignUpMode) {
+                                    "Switched to user registration screen. Tell us your name, email address, password, and confirm password keys."
+                                } else {
+                                    "Switched to registered user sign in login screen. Type email and passphrase credentials."
+                                }
+                                viewModel.ttsHelper.speak(prompt)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (isSignUpMode) "Already have credentials? Sign In" else "New client registration? Sign Up",
+                                color = SecondaryNeonCyan,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                    }
+                }
+            }
+
+            1 -> {
+                // PHONE OTP PANEL
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.5.dp, CardBorder, RoundedCornerShape(24.dp)),
+                    colors = CardDefaults.cardColors(containerColor = CardSlate),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text(
+                            text = "SECURE PHONE SMS HANDSHAKE",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = PulseVocalCyan,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.5.sp
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        val countryCodes = listOf("+1" to "US/CA", "+44" to "UK", "+91" to "IN", "+61" to "AU", "+81" to "JP", "+49" to "DE", "+33" to "FR", "+86" to "CN", "+55" to "BR", "+7" to "RU/KZ")
+                        var selectedCountryCode by remember { mutableStateOf(countryCodes[0].first) }
+                        var showCountryMenu by remember { mutableStateOf(false) }
+
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Box {
+                                Button(
+                                    onClick = { showCountryMenu = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = CardBorder),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.height(56.dp)
+                                ) {
+                                    Text(selectedCountryCode, color = SlateLightText)
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Select country code", tint = SlateLightText)
+                                }
+                                DropdownMenu(
+                                    expanded = showCountryMenu,
+                                    onDismissRequest = { showCountryMenu = false },
+                                    modifier = Modifier.background(CardSlate)
+                                ) {
+                                    countryCodes.forEach { (code, name) ->
+                                        DropdownMenuItem(
+                                            text = { Text("$name ($code)", color = SlateLightText) },
+                                            onClick = {
+                                                selectedCountryCode = code
+                                                showCountryMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            OutlinedTextField(
+                                value = phoneInput,
+                                onValueChange = { phoneInput = it },
+                                label = { Text("Phone Number") },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = PrimaryNeonBlue,
+                                    unfocusedBorderColor = CardBorder,
+                                    focusedLabelColor = PrimaryNeonBlue,
+                                    unfocusedLabelColor = SlateMutedText,
+                                    focusedTextColor = SlateLightText,
+                                    unfocusedTextColor = SlateLightText
+                                ),
+                                singleLine = true,
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("phone_input_field"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (otpSentCode == null) {
+                            Button(
+                                onClick = {
+                                    if (phoneInput.length < 5) {
+                                        viewModel.ttsHelper.speak("Invalid phone digit length. Please enter valid phone layout.")
+                                        return@Button
+                                    }
+                                    val fullPhone = selectedCountryCode + phoneInput
+                                    val randomCode = (1000..9999).random().toString()
+                                    otpSentCode = randomCode
+                                    viewModel.ttsHelper.speak("Simulated SMS gateway sent code to $fullPhone. Your secure authorization text verification pin is: $randomCode. Repeated for eye free entry, $randomCode.")
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = CardBorder),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("send_otp_button"),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("REQUEST VERIFICATION SMS", color = SlateLightText, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Text(
+                                text = "OTP verification text code sent. Input the digits below.",
+                                style = MaterialTheme.typography.bodySmall.copy(color = AccentuatingGreen),
+                                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = otpInput,
+                                onValueChange = { otpInput = it },
+                                label = { Text("Security Verification Pin") },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = PrimaryNeonBlue,
+                                    unfocusedBorderColor = CardBorder,
+                                    focusedLabelColor = PrimaryNeonBlue,
+                                    unfocusedLabelColor = SlateMutedText,
+                                    focusedTextColor = SlateLightText,
+                                    unfocusedTextColor = SlateLightText
+                                ),
+                                singleLine = true,
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("otp_code_field"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Button(
+                                onClick = {
+                                    if (otpInput == otpSentCode) {
+                                        val fullPhone = selectedCountryCode + phoneInput
+                                        viewModel.loginWithPhone(fullPhone)
+                                    } else {
+                                        viewModel.ttsHelper.speak("OTP Verification code mismatch. Re-verify the announced pin.")
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonBlue),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp)
+                                    .testTag("verify_otp_button"),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("VERIFY & SIGN IN", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            TextButton(
+                                onClick = {
+                                    otpSentCode = null
+                                    otpInput = ""
+                                    viewModel.ttsHelper.speak("Cleared OTP states. Please revalidate phone submission.")
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Resend SMS Connection Code", color = SecondaryNeonCyan)
+                            }
+                        }
+                    }
+                }
+            }
+
+            2 -> {
+                // GOOGLE ACCOUNT SELECTOR HOYT COMPONENT
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.5.dp, CardBorder, RoundedCornerShape(24.dp)),
+                    colors = CardDefaults.cardColors(containerColor = CardSlate),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text(
+                            text = "GOOGLE CONNECTIVITY CHOOSE",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = PulseVocalCyan,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.5.sp
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "Connect Google Cloud secure accounts securely utilizing hardware authentication layers.",
+                            style = MaterialTheme.typography.bodyMedium.copy(color = SlateMutedText)
+                        )
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Button(
+                            onClick = {
+                                viewModel.ttsHelper.speak("Opening native Google Single Sign-On Account chooser dialog panel.")
+                                coroutineScope.launch {
+                                    try {
+                                        val googleIdOption = com.google.android.libraries.identity.googleid.GetGoogleIdOption.Builder()
+                                            .setFilterByAuthorizedAccounts(false)
+                                            .setServerClientId(com.example.BuildConfig.GOOGLE_WEB_CLIENT_ID)
+                                            .setAutoSelectEnabled(false)
+                                            .build()
+
+                                        val request = androidx.credentials.GetCredentialRequest.Builder()
+                                            .addCredentialOption(googleIdOption)
+                                            .build()
+
+                                        val credentialManager = androidx.credentials.CredentialManager.create(localContext)
+                                        val result = credentialManager.getCredential(
+                                            request = request,
+                                            context = localContext
+                                        )
+                                        
+                                        val credential = result.credential
+                                        if (credential is androidx.credentials.CustomCredential && credential.type == com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                                            val googleIdTokenCredential = com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.createFrom(credential.data)
+                                            val email = googleIdTokenCredential.id
+                                            val name = googleIdTokenCredential.displayName ?: "Google User"
+                                            val idToken = googleIdTokenCredential.idToken
+                                            com.example.auth.FirebaseAuthManager.signInWithGoogle(idToken, onSuccess = { firebaseUser ->
+                                                val fName = firebaseUser.displayName ?: name
+                                                val fEmail = firebaseUser.email ?: email
+                                                viewModel.loginWithSession(fEmail, fName, "Real Google Account Link")
+                                                viewModel.ttsHelper.speak("Successfully linked to Google Cloud.")
+                                            }, onFailure = {
+                                                // Fallback to local session
+                                                viewModel.loginWithSession(email, name, "Real Google Account Link")
+                                                viewModel.ttsHelper.speak("Successfully linked to Google Account Locally (Firebase unavailable).")
+                                            })
+                                        } else {
+                                            viewModel.ttsHelper.speak("Unknown credential type returned.")
+                                        }
+                                    } catch (e: Exception) {
+                                        viewModel.ttsHelper.speak("Real Google Sign In failed. Make sure to configure the Google Web Client ID in the Settings configuration variables.")
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonBlue),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                                .testTag("google_login_dialog_trigger"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.AccountCircle, null, tint = OLEDBlack)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("SIGN IN USING GOOGLE HUB", color = OLEDBlack, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            3 -> {
+                // SANDBOX GUEST ACCESS
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.5.dp, CardBorder, RoundedCornerShape(24.dp)),
+                    colors = CardDefaults.cardColors(containerColor = CardSlate),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text(
+                            text = "LOCAL CLIENT EMBEDDED GUEST",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = PulseVocalCyan,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.5.sp
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Text(
+                            text = "Continue using an isolated offline sandbox guest file profile. Features will operate locally with client mock capabilities.",
+                            style = MaterialTheme.typography.bodyMedium.copy(color = SlateMutedText)
+                        )
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Button(
+                            onClick = { viewModel.login(isGuest = true) },
+                            colors = ButtonDefaults.buttonColors(containerColor = CardBorder),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .testTag("guest_mode_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.DirectionsWalk, null, tint = SlateLightText)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("CONTINUE AS SANDBOX GUEST", color = SlateLightText, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(40.dp))
     }
 }
 
@@ -515,6 +1017,8 @@ fun DashboardHome(viewModel: MainViewModel, onNavigate: (String) -> Unit) {
     val heights by viewModel.waveformHeights.collectAsState()
     val speakInput by viewModel.spokenInputText.collectAsState()
     val isAccEnabled by viewModel.isAccessibilityEnabled.collectAsState()
+    val isHandsFree by viewModel.isHandsFreeMode.collectAsState()
+    val wakeWordState by viewModel.wakeWordState.collectAsState()
 
     Column(
         modifier = Modifier
@@ -723,6 +1227,59 @@ fun DashboardHome(viewModel: MainViewModel, onNavigate: (String) -> Unit) {
                     textAlign = TextAlign.Center
                 )
 
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(OLEDBlack.copy(alpha = 0.5f))
+                        .border(1.dp, if (isHandsFree) PulseVocalCyan else CardBorder, RoundedCornerShape(16.dp))
+                        .clickable { viewModel.toggleHandsFreeMode() }
+                        .padding(12.dp)
+                        .semantics {
+                            contentDescription = "Hands-free continuous voice wake up mode. Currently " + 
+                                if (isHandsFree) "Enabled" else "Disabled"
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "CONTINUOUS WAKE WAKEWORD FLOW",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = if (isHandsFree) PulseVocalCyan else SlateMutedText,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
+                        )
+                        Text(
+                            text = if (isHandsFree) {
+                                when (wakeWordState) {
+                                    WakeWordState.WAITING_FOR_WAKE -> "Awake word active. Say 'Hi' or 'Hello' anytime."
+                                    WakeWordState.LISTENING_FOR_COMMAND -> "Awake! Speak a command now."
+                                    else -> "Awake word is active."
+                                }
+                            } else {
+                                "Hands-free wakeup mode is OFF."
+                            },
+                            style = MaterialTheme.typography.bodySmall.copy(color = SlateLightText)
+                        )
+                    }
+
+                    Switch(
+                        checked = isHandsFree,
+                        onCheckedChange = { viewModel.toggleHandsFreeMode() },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = OLEDBlack,
+                            checkedTrackColor = PulseVocalCyan,
+                            uncheckedThumbColor = SlateMutedText,
+                            uncheckedTrackColor = CardBorder
+                        ),
+                        modifier = Modifier.testTag("hands_free_mode_switch")
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // WAVEFORM ANIMATION GRAPHICS
@@ -902,6 +1459,9 @@ fun DashboardHome(viewModel: MainViewModel, onNavigate: (String) -> Unit) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 6.dp)
+                        .semantics { 
+                            contentDescription = "Execute quick command: \$cmdText"
+                        }
                         .clickable {
                             viewModel.typeSimulatedVoiceQuery(cmdText)
                             viewModel.toggleAssistantListening()
@@ -971,6 +1531,9 @@ fun DashboardHome(viewModel: MainViewModel, onNavigate: (String) -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp)
+                    .semantics { 
+                        contentDescription = "Navigate to \$title tool"
+                    }
                     .clickable { onNavigate(route) }
                     .border(1.dp, CardBorder, RoundedCornerShape(20.dp)),
                 colors = CardDefaults.cardColors(containerColor = CardSlate),
@@ -1004,7 +1567,7 @@ fun DashboardHome(viewModel: MainViewModel, onNavigate: (String) -> Unit) {
                             .background(PrimaryNeonBlue.copy(alpha = 0.15f))
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Launch,
+                            imageVector = Icons.AutoMirrored.Filled.Launch,
                             contentDescription = "Launch $title page model",
                             tint = PrimaryNeonBlue
                         )
@@ -1252,7 +1815,7 @@ fun ScreenUnderstandingPage(viewModel: MainViewModel, onBack: () -> Unit) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 val ic = when (element.type) {
                                     "Button" -> Icons.Default.SmartButton
-                                    "Text" -> Icons.Default.Notes
+                                    "Text" -> Icons.AutoMirrored.Filled.Notes
                                     "Input" -> Icons.Default.Keyboard
                                     else -> Icons.Default.Android
                                 }
@@ -1733,6 +2296,9 @@ fun CameraGuidePage(viewModel: MainViewModel, onBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp)
+                    .semantics { 
+                        contentDescription = "Trigger camera action: \$title"
+                    }
                     .clickable { viewModel.triggerCameraGuideAction(title) }
                     .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
                 colors = CardDefaults.cardColors(containerColor = CardSlate),
@@ -2133,6 +2699,10 @@ fun ProfilePage(viewModel: MainViewModel) {
     val selectedVoice by viewModel.selectedVoice.collectAsState()
     val selectedLanguage by viewModel.selectedLanguage.collectAsState()
 
+    val sessionUserEmail by viewModel.sessionUserEmail.collectAsState()
+    val sessionUserName by viewModel.sessionUserName.collectAsState()
+    val sessionProvider by viewModel.sessionProvider.collectAsState()
+
     var showLangMenu by remember { mutableStateOf(false) }
     var showVoiceMenu by remember { mutableStateOf(false) }
 
@@ -2154,11 +2724,109 @@ fun ProfilePage(viewModel: MainViewModel) {
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        // ACTIVE USER PROFILE SESSION CARD
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(2.dp, PrimaryNeonBlue, RoundedCornerShape(24.dp)),
+            colors = CardDefaults.cardColors(containerColor = CardSlate),
+            shape = RoundedCornerShape(24.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = "ACTIVE SECURE CLIENT LINK",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = PulseVocalCyan,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.5.sp
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(PrimaryNeonBlue.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = (sessionUserName ?: "U").take(1).uppercase(),
+                            color = PrimaryNeonBlue,
+                            fontWeight = FontWeight.ExtraBold,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = sessionUserName ?: "VisionPilot User",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                color = SlateLightText,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                        Text(
+                            text = sessionUserEmail ?: "offline@visionpilot.ai",
+                            style = MaterialTheme.typography.bodyMedium.copy(color = SlateMutedText)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(PulseVocalCyan.copy(alpha = 0.15f))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "Via: ${sessionProvider ?: "Guest Access"}",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = PulseVocalCyan,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Button(
+                    onClick = { viewModel.logout() },
+                    colors = ButtonDefaults.buttonColors(containerColor = WarningRed.copy(alpha = 0.2f)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .border(1.5.dp, WarningRed, RoundedCornerShape(12.dp))
+                        .testTag("auth_logout_button")
+                ) {
+                    Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, tint = WarningRed)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "TERMINATE DEVICE SESSION",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            color = WarningRed,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
         // SECTION 1: SYSTEM CONTROLS
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.5.dp, CardBorder, RoundedCornerShape(24.dp)),
+                .border(2.dp, CardBorder, RoundedCornerShape(24.dp)),
             colors = CardDefaults.cardColors(containerColor = CardSlate),
             shape = RoundedCornerShape(24.dp)
         ) {
@@ -2202,7 +2870,7 @@ fun ProfilePage(viewModel: MainViewModel) {
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-                Divider(color = CardBorder, thickness = 1.dp)
+                HorizontalDivider(color = CardBorder, thickness = 1.dp)
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Row 2: accessibility capture engine handshake
@@ -2233,6 +2901,65 @@ fun ProfilePage(viewModel: MainViewModel) {
                             checkedTrackColor = PrimaryNeonBlue
                         ),
                         modifier = Modifier.testTag("accessibility_toggle")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = CardBorder, thickness = 1.dp)
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Row 3: Battery Optimization
+                val context = LocalContext.current
+                var isIgnoringBatteryOptimizations by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+                    isIgnoringBatteryOptimizations = pm.isIgnoringBatteryOptimizations(context.packageName)
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        if (!isIgnoringBatteryOptimizations) {
+                            try {
+                                val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                    data = android.net.Uri.parse("package:${context.packageName}")
+                                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                android.util.Log.e("Settings", "Failed to launch battery options", e)
+                            }
+                        } else {
+                            try {
+                                val intent = android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                // Fallback if general settings page fails
+                            }
+                        }
+                    },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Unrestricted Battery Mode",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                color = SlateLightText,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                        Text(
+                            text = if (isIgnoringBatteryOptimizations) "Optimizations disabled (Wake Word active safely)" else "Enable to prevent Doze Mode from killing background Wake Word",
+                            style = MaterialTheme.typography.bodyMedium.copy(color = SlateMutedText)
+                        )
+                    }
+                    
+                    Icon(
+                        imageVector = if (isIgnoringBatteryOptimizations) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+                        contentDescription = "Battery Optimization Status",
+                        tint = if (isIgnoringBatteryOptimizations) PrimaryNeonBlue else androidx.compose.ui.graphics.Color(0xFFFFA000)
                     )
                 }
             }
@@ -2278,7 +3005,7 @@ fun ProfilePage(viewModel: MainViewModel) {
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
-                Divider(color = CardBorder, thickness = 1.dp)
+                HorizontalDivider(color = CardBorder, thickness = 1.dp)
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Speech Pitch segmented button row
@@ -2320,7 +3047,7 @@ fun ProfilePage(viewModel: MainViewModel) {
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-                Divider(color = CardBorder, thickness = 1.dp)
+                HorizontalDivider(color = CardBorder, thickness = 1.dp)
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Voice selection row
@@ -2386,7 +3113,7 @@ fun ProfilePage(viewModel: MainViewModel) {
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-                Divider(color = CardBorder, thickness = 1.dp)
+                HorizontalDivider(color = CardBorder, thickness = 1.dp)
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Language selection segment
@@ -2441,10 +3168,107 @@ fun ProfilePage(viewModel: MainViewModel) {
 
         Spacer(modifier = Modifier.height(20.dp))
 
+        // SECTION: EMERGENCY CONTACT SETTINGS
+        val emergencyContactName by viewModel.emergencyContactName.collectAsState()
+        val emergencyContactNumber by viewModel.emergencyContactNumber.collectAsState()
+        
+        var isEditingEmergency by remember { mutableStateOf(false) }
+        var tempEmergencyName by remember { mutableStateOf(emergencyContactName) }
+        var tempEmergencyNumber by remember { mutableStateOf(emergencyContactNumber) }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.5.dp, WarningRed, RoundedCornerShape(24.dp)),
+            colors = CardDefaults.cardColors(containerColor = CardSlate),
+            shape = RoundedCornerShape(24.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = "EMERGENCY CONTACT",
+                    style = MaterialTheme.typography.labelSmall.copy(color = WarningRed, fontWeight = FontWeight.Bold)
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                if (isEditingEmergency) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = tempEmergencyName,
+                        onValueChange = { tempEmergencyName = it },
+                        label = { Text("Contact Name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = SlateLightText,
+                            unfocusedTextColor = SlateMutedText,
+                            focusedBorderColor = PulseVocalCyan,
+                            unfocusedBorderColor = CardBorder
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = tempEmergencyNumber,
+                        onValueChange = { tempEmergencyNumber = it },
+                        label = { Text("Phone Number") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone),
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = SlateLightText,
+                            unfocusedTextColor = SlateMutedText,
+                            focusedBorderColor = PulseVocalCyan,
+                            unfocusedBorderColor = CardBorder
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                        androidx.compose.material3.TextButton(onClick = { isEditingEmergency = false }) {
+                            Text("Cancel", color = SlateMutedText)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                viewModel.updateEmergencyContact(tempEmergencyName, tempEmergencyNumber)
+                                isEditingEmergency = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = WarningRed)
+                        ) {
+                            Text("Save", color = Color.White)
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "Say 'call for help' to dial instantly.",
+                        style = MaterialTheme.typography.bodyMedium.copy(color = SlateMutedText)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = if (emergencyContactName.isNotBlank()) "$emergencyContactName - $emergencyContactNumber" else "Not configured",
+                        style = MaterialTheme.typography.titleMedium.copy(color = SlateLightText, fontWeight = FontWeight.Bold)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            tempEmergencyName = emergencyContactName
+                            tempEmergencyNumber = emergencyContactNumber
+                            isEditingEmergency = true
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CardBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (emergencyContactNumber.isBlank()) "Setup Emergency Contact" else "Edit Emergency Contact", color = SlateLightText)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
         // SECTION 3: PERMISSIONS MANAGEMENT
         val context = androidx.compose.ui.platform.LocalContext.current
         val isCameraGranted by viewModel.isCameraGranted.collectAsState()
         val isRecordAudioGranted by viewModel.isRecordAudioGranted.collectAsState()
+        val isContactsGranted by viewModel.isContactsGranted.collectAsState()
         val isAccessibilityActive by viewModel.isAccessibilityActive.collectAsState()
         val isOverlayGranted by viewModel.isOverlayGranted.collectAsState()
 
@@ -2467,7 +3291,8 @@ fun ProfilePage(viewModel: MainViewModel) {
                     Pair("Screen Overlay Frame capture", if (isOverlayGranted) "GRANTED" else "DENIED"),
                     Pair("Accessibility Automation capture", if (isAccessibilityActive) "GRANTED" else "DENIED"),
                     Pair("Hardware Back camera permission", if (isCameraGranted) "GRANTED" else "DENIED"),
-                    Pair("Vocal Microphone feed permission", if (isRecordAudioGranted) "GRANTED" else "DENIED")
+                    Pair("Vocal Microphone feed permission", if (isRecordAudioGranted) "GRANTED" else "DENIED"),
+                    Pair("Local Phone Contacts access", if (isContactsGranted) "GRANTED" else "DENIED")
                 )
 
                 permissions.forEach { (name, status) ->
@@ -2507,8 +3332,23 @@ fun ProfilePage(viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+                ) { permissions ->
+                    viewModel.updatePermissionsState()
+                    viewModel.triggerPermissionSync(context)
+                }
+
                 Button(
-                    onClick = { viewModel.triggerPermissionSync(context) },
+                    onClick = {
+                        permissionLauncher.launch(
+                            arrayOf(
+                                android.Manifest.permission.CAMERA,
+                                android.Manifest.permission.RECORD_AUDIO,
+                                android.Manifest.permission.READ_CONTACTS
+                            )
+                        )
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonBlue),
                     modifier = Modifier
                         .fillMaxWidth()
