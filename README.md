@@ -189,6 +189,61 @@ python main.py
 
 ---
 
+## 🙏 Credits & Acknowledgments
+
+### AI Tools Used in Development
+
+| Tool | Role | Tier |
+|---|---|---|
+| **Google Gemini 2.0 Flash** | Core AI backbone — powers the agentic reasoning engine, screen understanding, multimodal vision (screenshot OCR), goal decomposition, and step planning | Free tier |
+| **Devin** (by Cognition AI) | AI software engineer — built the C++ firmware port, HIL simulation suite, agentic backend (`agent.py`), and Android integration | Free tier |
+| **Claude** (by Anthropic) | AI assistant — helped with architecture planning, code review, and documentation | Free tier |
+
+### Open-Source Libraries & Frameworks
+
+**Android App:**
+| Library | Purpose |
+|---|---|
+| [Jetpack Compose](https://developer.android.com/jetpack/compose) | Declarative UI framework |
+| [Firebase AI](https://firebase.google.com/docs/vertex-ai) | Gemini model access via Firebase |
+| [Retrofit](https://square.github.io/retrofit/) + [OkHttp](https://square.github.io/okhttp/) | HTTP client for backend communication |
+| [Moshi](https://github.com/square/moshi) | JSON serialization |
+| [CameraX](https://developer.android.com/training/camerax) | Camera capture pipeline |
+| [Kotlin Coroutines](https://kotlinlang.org/docs/coroutines-overview.html) | Async/concurrent programming |
+| [Accompanist Permissions](https://google.github.io/accompanist/permissions/) | Runtime permission handling |
+| [Room](https://developer.android.com/training/data-storage/room) | Local database |
+| [Navigation Compose](https://developer.android.com/jetpack/compose/navigation) | In-app navigation |
+
+**Backend (Python):**
+| Library | Purpose |
+|---|---|
+| [FastAPI](https://fastapi.tiangolo.com/) | REST API framework |
+| [google-generativeai](https://github.com/google-gemini/generative-ai-python) | Gemini API client |
+| [Pydantic](https://docs.pydantic.dev/) | Data validation & serialization |
+| [Uvicorn](https://www.uvicorn.org/) | ASGI server |
+
+**Hardware Firmware (C++):**
+| Library | Purpose |
+|---|---|
+| [Intel RealSense SDK (librealsense2)](https://github.com/IntelRealSense/librealsense) | Dual D435i depth camera capture |
+| [CMake](https://cmake.org/) | Cross-platform build system |
+| C++ Standard Library (`std::thread`, `std::mutex`) | Threading & synchronization |
+| Linux I2C (`i2c-dev`, `I2C_RDWR` ioctl) | Raw I2C communication with PCA9685 boards |
+
+**Hardware Components:**
+| Component | Spec |
+|---|---|
+| Raspberry Pi 4B | Cortex-A72, BCM2711, I2C Fast Mode (400kHz) |
+| Intel RealSense D435i (×2) | Stereo depth cameras, 640×480 @ 30fps |
+| NXP PCA9685 (×9) | 16-channel 12-bit PWM drivers |
+| ERM Vibration Motors (×144) | 12×12 haptic grid, 3V/75mA each |
+
+### Methodology Note
+
+The hardware simulation (`hardware/tests/hil_simulation.py`) uses noise models and timing parameters derived from published datasheets — not arbitrary mock values. All protocol sequences were validated against NXP PCA9685 Datasheet Rev.4 (2015) and Intel RealSense D435i specifications (2019).
+
+---
+
 ## 📄 License
 
 MIT License — Open for contribution and community development.
