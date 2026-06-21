@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 
-from agent import VisionAgent, AgentAction, AgentPlan, ActionType, StepResult
+from agent import VisionAgent, AgentAction, AgentPlan, ActionType, StepResult, AgentMemory
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("main")
@@ -115,7 +115,11 @@ class AgentStepRequest(BaseModel):
     success: bool
     screenElementsJson: str = "[]"
     screenDescription: str = ""
+    screenshotBase64: str = ""  # Optional screenshot for vision fallback
     error: str = ""
+
+class AgentConfirmRequest(BaseModel):
+    approved: bool
 
 class AgentActionResponse(BaseModel):
     action: str
@@ -128,6 +132,8 @@ class AgentActionResponse(BaseModel):
     planStatus: str
     currentStep: int
     totalSteps: int
+    requiresConfirmation: bool = False
+    confirmationMessage: str = ""
 
 class AgentStatusResponse(BaseModel):
     hasActivePlan: bool
@@ -137,6 +143,7 @@ class AgentStatusResponse(BaseModel):
     totalSteps: int
     narration: str
     actionsExecuted: int
+    memoryContext: str = ""
 
 # ================= REST ENDPOINTS =================
 
@@ -353,6 +360,7 @@ async def agent_next_action(request: AgentStepRequest):
         screen_description=request.screenDescription,
         elements_json=request.screenElementsJson,
         error=request.error,
+        screenshot_base64=request.screenshotBase64,
     )
 
     action = agent.advance_step(result)
@@ -369,6 +377,32 @@ async def agent_next_action(request: AgentStepRequest):
         planStatus=plan.status if plan else "none",
         currentStep=plan.current_step if plan else 0,
         totalSteps=len(plan.steps) if plan else 0,
+        requiresConfirmation=action.requires_confirmation,
+        confirmationMessage=action.confirmation_message,
+    )
+
+
+@app.post("/agent/confirm", response_model=AgentActionResponse)
+async def agent_confirm(request: AgentConfirmRequest):
+    """
+    User approves or denies a risky action that requires confirmation.
+    """
+    action = agent.confirm_action(request.approved)
+    plan = agent.current_plan
+
+    return AgentActionResponse(
+        action=action.action.value,
+        target=action.target,
+        value=action.value,
+        narration=action.narration,
+        x=action.x,
+        y=action.y,
+        confidence=action.confidence,
+        planStatus=plan.status if plan else "none",
+        currentStep=plan.current_step if plan else 0,
+        totalSteps=len(plan.steps) if plan else 0,
+        requiresConfirmation=action.requires_confirmation,
+        confirmationMessage=action.confirmation_message,
     )
 
 
@@ -384,7 +418,15 @@ async def agent_status():
         totalSteps=len(plan.steps) if plan else 0,
         narration=agent.get_status_narration(),
         actionsExecuted=len(agent.action_history),
+        memoryContext=agent.memory.get_context_summary(),
     )
+
+
+@app.post("/agent/memory/credential")
+async def agent_remember_credential(app_name: str, username: str):
+    """Store that the agent knows a login for an app."""
+    agent.memory.remember_credential(app_name, username)
+    return {"status": "saved", "app": app_name}
 
 
 @app.post("/agent/reset")

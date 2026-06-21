@@ -44,20 +44,25 @@ data class AgentStepRequest(
     val success: Boolean,
     val screenElementsJson: String = "[]",
     val screenDescription: String = "",
+    val screenshotBase64: String = "",  // Screenshot for vision fallback
     val error: String = ""
 )
 
+data class AgentConfirmRequest(val approved: Boolean)
+
 data class AgentActionResponse(
-    val action: String,       // "tap", "type_text", "open_app", "scroll_down", "press_back", "done", "fail", etc.
+    val action: String,       // "tap", "type_text", "open_app", "scroll_down", "press_back", "done", "fail", "confirm", etc.
     val target: String,
     val value: String,
     val narration: String,
     val x: Int,
     val y: Int,
     val confidence: Double,
-    val planStatus: String,   // "executing", "completed", "failed"
+    val planStatus: String,   // "executing", "awaiting_confirmation", "completed", "failed"
     val currentStep: Int,
-    val totalSteps: Int
+    val totalSteps: Int,
+    val requiresConfirmation: Boolean = false,
+    val confirmationMessage: String = ""
 )
 
 data class AgentStatusResponse(
@@ -67,7 +72,8 @@ data class AgentStatusResponse(
     val currentStep: Int,
     val totalSteps: Int,
     val narration: String,
-    val actionsExecuted: Int
+    val actionsExecuted: Int,
+    val memoryContext: String = ""
 )
 
 /**
@@ -95,6 +101,9 @@ interface VisionPilotService {
 
     @GET("/agent/status")
     suspend fun agentStatus(): Response<AgentStatusResponse>
+
+    @POST("/agent/confirm")
+    suspend fun agentConfirm(@Body request: AgentConfirmRequest): Response<AgentActionResponse>
 
     @POST("/agent/reset")
     suspend fun agentReset(): Response<Map<String, String>>
@@ -200,7 +209,12 @@ class MockVisionPilotClient {
         val step = mockPlanSteps[mockCurrentStep]
         mockCurrentStep++
 
+        // Simulate confirmation for risky steps
+        val riskyKeywords = listOf("password", "sign in", "log in", "post", "comment", "send", "pay")
+        val needsConfirm = riskyKeywords.any { step.lowercase().contains(it) }
+
         val action = when {
+            needsConfirm -> "confirm"
             step.lowercase().startsWith("open") -> "open_app"
             step.lowercase().contains("tap") || step.lowercase().contains("click") -> "tap"
             step.lowercase().startsWith("type") || step.lowercase().contains("search for") -> "type_text"
@@ -213,12 +227,43 @@ class MockVisionPilotClient {
             action = action,
             target = step,
             value = if (action == "type_text") step.substringAfter(":").trim().ifEmpty { step.substringAfter("for").trim() } else "",
-            narration = "Step ${mockCurrentStep} of ${mockPlanSteps.size}: $step",
+            narration = if (needsConfirm) "I need your permission: $step. Should I proceed?" else "Step ${mockCurrentStep} of ${mockPlanSteps.size}: $step",
             x = 540, y = 960,
             confidence = 0.9,
-            planStatus = "executing",
+            planStatus = if (needsConfirm) "awaiting_confirmation" else "executing",
             currentStep = mockCurrentStep,
-            totalSteps = mockPlanSteps.size
+            totalSteps = mockPlanSteps.size,
+            requiresConfirmation = needsConfirm,
+            confirmationMessage = if (needsConfirm) "I'm about to: $step. Should I proceed?" else ""
         )
+    }
+
+    suspend fun mockConfirm(approved: Boolean): AgentActionResponse {
+        delay(400)
+        return if (approved) {
+            AgentActionResponse(
+                action = "tap",
+                target = "Proceeding with approved action",
+                value = "",
+                narration = "Permission granted. Continuing.",
+                x = 540, y = 960,
+                confidence = 1.0,
+                planStatus = "executing",
+                currentStep = mockCurrentStep,
+                totalSteps = mockPlanSteps.size
+            )
+        } else {
+            AgentActionResponse(
+                action = "wait",
+                target = "",
+                value = "",
+                narration = "Understood. Skipping that step.",
+                x = 0, y = 0,
+                confidence = 1.0,
+                planStatus = "executing",
+                currentStep = mockCurrentStep,
+                totalSteps = mockPlanSteps.size
+            )
+        }
     }
 }
