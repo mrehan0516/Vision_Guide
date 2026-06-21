@@ -146,11 +146,6 @@ Outputs a structured JSON report (`hil_results.json`) suitable for CI integratio
 - [x] Integration with software navigation layer
 - [x] Hardware validation suite (22 tests, datasheet-verified)
 
-**Phase 3 — Integration**
-- [ ] End-to-end flow: voice query → find service → navigate there
-- [ ] User testing with visually impaired individuals
-- [ ] Feedback loop and refinement
-
 ---
 
 ## 👥 Target Users
