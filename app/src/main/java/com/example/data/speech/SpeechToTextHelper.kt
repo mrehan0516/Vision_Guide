@@ -90,6 +90,11 @@ class SpeechToTextHelper(
     }
 
     fun startListening() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            onError("Microphone permission is required to listen.")
+            return
+        }
+
         try {
             speechRecognizer?.startListening(recognizerIntent)
         } catch (e: Exception) {

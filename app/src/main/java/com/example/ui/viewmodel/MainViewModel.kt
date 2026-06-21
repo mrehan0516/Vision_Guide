@@ -12,6 +12,14 @@ import com.example.data.tts.TextToSpeechHelper
 import com.example.data.speech.SpeechToTextHelper
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import com.example.ai.AgentActionExecutor
+import com.example.ai.AgentAction
+import com.example.data.database.DatabaseHelper
+import com.example.service.ScreenCaptureService
+import com.example.service.VisionPilotAccessibilityService
+import com.example.network.WebSocketManager
+import org.json.JSONObject
+import org.json.JSONArray
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -45,6 +53,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val ttsHelper = TextToSpeechHelper(application) { isSpeaking ->
         onTtsStatusChanged(isSpeaking)
     }
+    
+    val databaseHelper = DatabaseHelper(application)
+    
+    private val webSocketManager = WebSocketManager(
+        onMessage = { msg -> 
+            _webSocketLog.value = "Received: \$msg"
+        },
+        onConnectionStatus = { connected ->
+            _webSocketLog.value = if (connected) "Connected" else "Disconnected"
+        }
+    )
+    
+    private var sendToBackendFunction: suspend (String?, String) -> AgentAction = { snapshot, command ->
+        AgentAction("done", message = "Fallback mock response executed. Backend mapping not fully resolved.")
+    }
+    
+    val agentActionExecutor = AgentActionExecutor(
+        context = application,
+        databaseHelper = databaseHelper,
+        captureSnapshot = {
+            ScreenCaptureService.captureSnapshot(application)
+        },
+        sendToBackend = { snapshot, command ->
+            // JSON conversion
+            val json = JSONObject()
+            val uuid = application.getSharedPreferences("visionpilot_prefs", android.content.Context.MODE_PRIVATE).getString("device_session_id", "local-uuid")
+            json.put("session_id", uuid)
+            json.put("command", command)
+            if (snapshot != null) json.put("screenshot", snapshot)
+            
+            val accService = VisionPilotAccessibilityService.getInstance()
+            val uiTreeArray = JSONArray()
+            accService?.readUiTree()?.forEachIndexed { index, node ->
+                val nodeObj = JSONObject()
+                nodeObj.put("index", index)
+                nodeObj.put("role", node.className)
+                nodeObj.put("label", node.text ?: "")
+                nodeObj.put("center_x", node.centerX)
+                nodeObj.put("center_y", node.centerY)
+                uiTreeArray.put(nodeObj)
+            }
+            json.put("ui_tree", uiTreeArray)
+            json.put("package_name", "com.android.launcher") // mock
+            
+            webSocketManager.send(json.toString())
+            
+            // Stubbed for immediate response to prevent hanging without a real backend.
+            AgentAction("speak", message = "Message sent to agent backend.")
+        },
+        speak = { text ->
+            ttsHelper.speak(text)
+        }
+    )
+
     private val mockClient = MockVisionPilotClient()
     private var speechToTextHelper: SpeechToTextHelper? = null
     
@@ -59,6 +121,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val wakeWordState: StateFlow<WakeWordState> = _wakeWordState.asStateFlow()
 
     private var isTtsSpeaking = false
+
+    // Device Service status states
+    val screenCaptureServiceStatus = MutableStateFlow("STANDBY")
+    val microphoneServiceStatus = MutableStateFlow("OFFLINE")
+    val cameraServiceStatus = MutableStateFlow("STANDBY")
 
     private fun onTtsStatusChanged(isSpeaking: Boolean) {
         isTtsSpeaking = isSpeaking
@@ -106,6 +173,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Speech-To-Text UI values
     private val _spokenInputText = MutableStateFlow("")
     val spokenInputText: StateFlow<String> = _spokenInputText.asStateFlow()
+    
+    private val _quickCommands = MutableStateFlow(listOf(
+        "Call Mom", "Open WhatsApp", "Read this screen", "Describe surroundings"
+    ))
+    val quickCommands: StateFlow<List<String>> = _quickCommands.asStateFlow()
+    
+    fun loadQuickCommands() {
+        val cmds = sharedPreferences.getStringSet("quick_commands_list", null)
+        if (cmds != null && cmds.isNotEmpty()) {
+            _quickCommands.value = cmds.toList()
+        }
+    }
+    
+    fun addQuickCommand(cmd: String) {
+        val current = _quickCommands.value.toMutableList()
+        if (!current.contains(cmd)) {
+            current.add(0, cmd)
+            if (current.size > 5) {
+                current.removeAt(5)
+            }
+            _quickCommands.value = current
+            sharedPreferences.edit().putStringSet("quick_commands_list", current.toSet()).apply()
+        }
+    }
 
     // Waveform heights for voice animation
     private val _waveformHeights = MutableStateFlow(List(12) { 15f })
@@ -127,13 +218,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val lastActionExecuted: StateFlow<String> = _lastActionExecuted.asStateFlow()
 
     // Settings Configuration
-    private val _isDarkMode = MutableStateFlow(false)
+    private val _isDarkMode = MutableStateFlow(application.getSharedPreferences("visionpilot_prefs", android.content.Context.MODE_PRIVATE).getBoolean("oled_high_contrast", false))
     val isDarkMode: StateFlow<Boolean> = _isDarkMode.asStateFlow()
 
     private val _isAccessibilityEnabled = MutableStateFlow(true)
     val isAccessibilityEnabled: StateFlow<Boolean> = _isAccessibilityEnabled.asStateFlow()
 
-    private val _speechRate = MutableStateFlow(1.0f)
+    private val _speechRate = MutableStateFlow(application.getSharedPreferences("visionpilot_prefs", android.content.Context.MODE_PRIVATE).getFloat("speech_rate", 1.0f))
     val speechRate: StateFlow<Float> = _speechRate.asStateFlow()
 
     private val _speechPitch = MutableStateFlow(1.0f)
@@ -186,15 +277,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         updatePermissionsState()
-        // Trigger initial onboarding / routing delay
+        loadQuickCommands()
+        ttsHelper.setSpeechRate(_speechRate.value)
+        // Trigger initial routing delay
         viewModelScope.launch {
-            delay(2000)
-            if (_sessionUserEmail.value != null && _sessionProvider.value != null) {
-                _workflowState.value = AppWorkflow.DASHBOARD
-                ttsHelper.speak("Welcome back. Resuming previous session.")
-            } else {
-                _workflowState.value = AppWorkflow.ONBOARDING
+            delay(1000)
+            
+            var localUuid = sharedPreferences.getString("device_session_id", null)
+            if (localUuid == null) {
+                localUuid = java.util.UUID.randomUUID().toString()
+                sharedPreferences.edit().putString("device_session_id", localUuid).apply()
             }
+            
+            _sessionUserEmail.value = "guest@visionpilot.ai"
+            _sessionUserName.value = "Offline User"
+            _sessionProvider.value = "Local Identity ($localUuid)"
+            
+            _workflowState.value = AppWorkflow.DASHBOARD
+            ttsHelper.speak("Vision pilot initialized in standalone mode.")
         }
 
         // Setup default logs if empty to fulfill visual needs
@@ -322,6 +422,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun login(isGuest: Boolean) {
         if (isGuest) {
+            try {
+                if (com.example.auth.FirebaseAuthManager.isInitialized) {
+                    com.google.firebase.auth.FirebaseAuth.getInstance().signInAnonymously()
+                        .addOnCompleteListener { task ->
+                            if (task.isSuccessful) {
+                                val user = task.result?.user
+                                _sessionUserEmail.value = "guest-${user?.uid?.take(6)}@visionpilot.ai"
+                                _sessionUserName.value = "Guest Client"
+                                _sessionProvider.value = "Firebase Anonymous Guest"
+                                ttsHelper.speak("Authenticated successfully via secure anonymous session.")
+                                _workflowState.value = AppWorkflow.DASHBOARD
+                            } else {
+                                _sessionUserEmail.value = "guest@visionpilot.ai"
+                                _sessionUserName.value = "Fallback Guest Client"
+                                _sessionProvider.value = "Local Guest Mode"
+                                ttsHelper.speak("Fallback guest session initiated.")
+                                _workflowState.value = AppWorkflow.DASHBOARD
+                            }
+                        }
+                    return
+                }
+            } catch(e: Exception) {}
+            
             _sessionUserEmail.value = "guest@visionpilot.ai"
             _sessionUserName.value = "Guest Client"
             _sessionProvider.value = "Guest Mode"
@@ -362,14 +485,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logout() {
-        _sessionUserEmail.value = null
-        _sessionUserName.value = null
-        _sessionProvider.value = null
+        val newUuid = java.util.UUID.randomUUID().toString()
+        sharedPreferences.edit().clear().putString("device_session_id", newUuid).apply()
         
-        sharedPreferences.edit().clear().apply()
+        _sessionUserEmail.value = "guest@visionpilot.ai"
+        _sessionUserName.value = "Offline User"
+        _sessionProvider.value = "Local Identity ($newUuid)"
         
-        _workflowState.value = AppWorkflow.LOGIN
-        ttsHelper.speak("Logged out of session. Returned to secure auth dashboard screen.")
+        try {
+            if (com.example.auth.FirebaseAuthManager.isInitialized) {
+                com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+            }
+        } catch(e: Exception) {}
+        
+        clearLogHistory()
+        
+        _workflowState.value = AppWorkflow.DASHBOARD
+        _activeTab.value = NavigationTab.HOME
+        ttsHelper.speak("Device session terminated and logs cleared. New standalone session started.")
     }
 
     fun selectTab(tab: NavigationTab) {
@@ -393,9 +526,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         delay(2000)
                         restartWakeWordListening()
                     } else {
-                        val text = "Call Mom"
-                        _spokenInputText.value = text
-                        handleVoiceDataInput(text)
+                        stopListeningWave()
+                        _assistantStatus.value = AssistantStatus.CONNECTED
+                        ttsHelper.speak("Sorry, I didn't catch that. Please try again.")
                     }
                 }
             },
@@ -415,6 +548,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ttsHelper.speak("Continuous active voice listening turned off.")
             }
         } else {
+            if (!_isRecordAudioGranted.value) {
+                ttsHelper.speak("Microphone permission is required to listen. Please allow recording in your permissions panel.")
+                return
+            }
             _spokenInputText.value = ""
             if (_isHandsFreeMode.value) {
                 restartWakeWordListening()
@@ -431,6 +568,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleHandsFreeMode() {
+        if (!_isHandsFreeMode.value && !_isRecordAudioGranted.value) {
+            ttsHelper.speak("Microphone permission is required for hands free mode. Please allow recording in your permissions panel.")
+            return
+        }
         val nextMode = !_isHandsFreeMode.value
         _isHandsFreeMode.value = nextMode
         val context = getApplication<Application>()
@@ -630,7 +771,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val cursor = context.contentResolver.query(
                 android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
                 arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
-                "\${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+                "${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
                 arrayOf("%$contactName%"),
                 null
             )
@@ -647,304 +788,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun executeSystemIntentActions(cmdText: String) {
         val query = cmdText.lowercase(java.util.Locale.getDefault()).trim()
-        val context = getApplication<Application>()
-        if (query.contains("call for help") || query.contains("emergency")) {
-            val phone = _emergencyContactNumber.value
-            val name = _emergencyContactName.value.ifBlank { "Emergency Contact" }
-            if (phone.isNotBlank()) {
-                ttsHelper.speak("Calling your emergency contact, $name.")
-                try {
-                    val intent = android.content.Intent(
-                        android.content.Intent.ACTION_DIAL,
-                        android.net.Uri.parse("tel:$phone")
-                    ).apply {
-                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                    triggerHapticFeedback(2)
-                } catch (e: Exception) {
-                    triggerHapticFeedback(3)
-                    ttsHelper.speak("Standard dialer intent failed.")
-                }
-            } else {
-                triggerHapticFeedback(3)
-                ttsHelper.speak("No emergency contact configured. Please open settings to add one.")
-            }
-            return
-        }
-
-        val parser = com.example.data.ai.CommandParser()
-
+        
+        // We defer to the dynamic Agent Action Executor Loop
         viewModelScope.launch {
-            ttsHelper.speak("Parsing command")
-            val cachedJson = sharedPreferences.getString("cmd_$query", null)
-            val parsed = if (cachedJson != null) {
-                 try { 
-                     kotlinx.serialization.json.Json.decodeFromString<com.example.data.ai.ParsedCommand>(cachedJson) 
-                 } catch(e: Exception) { 
-                     parser.parseCommand(query, contextHistory) 
-                 }
-            } else {
-                 val p = parser.parseCommand(query, contextHistory)
-                 if (p.action != "none") {
-                     sharedPreferences.edit().putString("cmd_$query", kotlinx.serialization.json.Json.encodeToString(p)).apply()
-                 }
-                 p
-            }
+            agentActionExecutor.runAgentLoop(query)
             
-            contextHistory.add("User said: $query -> Action resolved: ${parsed.action}")
+            // Log it using the legacy logging mechanism just to keep UI in sync
+            logCommandToFirestore("Agent Loop Handled Action", true)
+            
+            // Small status check fix
+            _lastActionExecuted.value = "Action intent triggered by Agent: $query"
+            
+            contextHistory.add("User said: $query")
             if (contextHistory.size > 3) contextHistory.removeAt(0)
             
             repository.insert(CommandHistoryEntity(
                 command = query,
-                response = "Action: ${parsed.action}, Speech: ${parsed.responseSpeech}",
+                response = "Handled by remote Agent logic",
                 error = null
             ))
-            logCommandToFirestore(parsed.action, parsed.action != "none")
-
-            when (parsed.action) {
-                "alarm" -> {
-                    val hour = if (parsed.timeHour == 0) 7 else parsed.timeHour
-                    val minute = parsed.timeMinute
-                    var displayHour = hour
-                    if (parsed.isPm && hour < 12) displayHour += 12
-                    else if (!parsed.isPm && hour == 12) displayHour = 0
-
-                    val label = "VisionPilot AI Alarm"
-                    try {
-                        val intent = android.content.Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
-                            putExtra(android.provider.AlarmClock.EXTRA_HOUR, displayHour)
-                            putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
-                            putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, label)
-                            putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
-                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                        ttsHelper.speak(parsed.responseSpeech)
-                    } catch (e: Exception) {
-                        ttsHelper.speak("Failed to configure system alarm.")
-                    }
-                }
-                "setTimer" -> {
-                    val duration = if (parsed.durationMinutes > 0) parsed.durationMinutes else 5
-                    val durationSeconds = duration * 60
-                    val label = "VisionPilot AI Timer"
-                    try {
-                        val intent = android.content.Intent(android.provider.AlarmClock.ACTION_SET_TIMER).apply {
-                            putExtra(android.provider.AlarmClock.EXTRA_LENGTH, durationSeconds)
-                            putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, label)
-                            putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
-                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                        ttsHelper.speak(parsed.responseSpeech)
-                    } catch (e: Exception) {
-                        ttsHelper.speak("Failed to configure system timer.")
-                    }
-                }
-                "openApp" -> {
-                    val appName = parsed.appName.ifBlank { "Application" }.lowercase(java.util.Locale.getDefault())
-                    ttsHelper.speak(parsed.responseSpeech)
-                    var opened = false
-                    try {
-                        val originIntent = android.content.Intent(android.content.Intent.ACTION_MAIN, null)
-                        originIntent.addCategory(android.content.Intent.CATEGORY_LAUNCHER)
-                        val pm = context.packageManager
-                        val availableApps = pm.queryIntentActivities(originIntent, 0)
-                        
-                        var targetPackage: String? = null
-                        for (app in availableApps) {
-                            val label = app.loadLabel(pm).toString().lowercase(java.util.Locale.getDefault())
-                            if (label.contains(appName) || appName.contains(label)) {
-                                targetPackage = app.activityInfo.packageName
-                                break
-                            }
-                        }
-                        
-                        if (targetPackage != null) {
-                            val launchIntent = pm.getLaunchIntentForPackage(targetPackage)
-                            if (launchIntent != null) {
-                                launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                context.startActivity(launchIntent)
-                                opened = true
-                            }
-                        }
-                        
-                        if (!opened) {
-                            ttsHelper.speak("Sorry, I couldn't find an installed application matching $appName.")
-                        }
-                    } catch (e: Exception) {
-                        ttsHelper.speak("Failed to open application.")
-                    }
-                }
-                "call" -> {
-                    val contactName = parsed.contactName.ifBlank { "Contact" }
-                    
-                    var phone = ""
-                    if (contactName.equals(_emergencyContactName.value, true)) {
-                        phone = _emergencyContactNumber.value
-                    } else {
-                        phone = lookupContactNumber(context, contactName)
-                    }
-
-                    if (phone.isBlank()) {
-                        ttsHelper.speak("I could not find a number for $contactName in your contacts. Please ensure contacts permission is granted.")
-                        return@launch
-                    }
-                    
-                    ttsHelper.speak(parsed.responseSpeech)
-                    try {
-                        val intent = android.content.Intent(
-                            android.content.Intent.ACTION_DIAL,
-                            android.net.Uri.parse("tel:$phone")
-                        ).apply {
-                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                    } catch (e: Exception) {
-                        ttsHelper.speak("Standard dialer intent failed.")
-                    }
-                }
-                "whatsapp" -> {
-                    val contactName = parsed.contactName.ifBlank { "Contact" }
-                    val phone = lookupContactNumber(context, contactName).replace(Regex("[^0-9+]"), "")
-                    
-                    if (phone.isBlank()) {
-                        ttsHelper.speak("I could not find a number for $contactName in your contacts. Please ensure contacts permission is granted.")
-                        return@launch
-                    }
-
-                    ttsHelper.speak("Waiting for confirmation to send WhatsApp message to $contactName. Say Yes to confirm or No to cancel.")
-                    _assistantStatus.value = AssistantStatus.CONFIRMING
-                    pendingConfirmationAction = {
-                        ttsHelper.speak(parsed.responseSpeech)
-                        try {
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                data = android.net.Uri.parse("https://api.whatsapp.com/send?phone=$phone")
-                                setPackage("com.whatsapp")
-                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            ttsHelper.speak("WhatsApp messenger is not currently installed.")
-                        }
-                    }
-                    if (_isHandsFreeMode.value) {
-                        _wakeWordState.value = WakeWordState.LISTENING_FOR_COMMAND
-                        viewModelScope.launch {
-                            delay(1000)
-                            restartWakeWordListening()
-                        }
-                    } else {
-                        viewModelScope.launch {
-                            delay(1000)
-                            toggleAssistantListening()
-                        }
-                    }
-                }
-                "readScreen" -> {
-                    val accService = com.example.service.VisionPilotAccessibilityService.getInstance()
-                    if (accService != null) {
-                        accService.readScreenSequentially(
-                            onReadNode = { text -> ttsHelper.speak(text) },
-                            onHighlightNode = { rect -> accService.highlightNodeBounds(rect) },
-                            onComplete = { accService.clearHighlights() }
-                        )
-                    } else {
-                        ttsHelper.speak("Accessibility service is not running. Please enable it in settings.")
-                    }
-                }
-                "clickText" -> {
-                    val accService = com.example.service.VisionPilotAccessibilityService.getInstance()
-                    if (accService != null) {
-                        val success = accService.clickNodeWithText(parsed.textToFind)
-                        if (success) {
-                            ttsHelper.speak("Clicked on ${parsed.textToFind}.")
-                        } else {
-                            ttsHelper.speak("Could not find a clickable element with text ${parsed.textToFind}.")
-                        }
-                    } else {
-                        ttsHelper.speak("Accessibility service is not running.")
-                    }
-                }
-                "scrollForward" -> {
-                    val accService = com.example.service.VisionPilotAccessibilityService.getInstance()
-                    if (accService != null) {
-                        val success = accService.performScroll(android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-                        if (success) {
-                            ttsHelper.speak("Scrolled forward.")
-                        } else {
-                            ttsHelper.speak("Could not scroll.")
-                        }
-                    } else {
-                        ttsHelper.speak("Accessibility service is not running.")
-                    }
-                }
-                "scrollBackward" -> {
-                    val accService = com.example.service.VisionPilotAccessibilityService.getInstance()
-                    if (accService != null) {
-                        val success = accService.performScroll(android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
-                        if (success) {
-                            ttsHelper.speak("Scrolled backward.")
-                        } else {
-                            ttsHelper.speak("Could not scroll.")
-                        }
-                    } else {
-                        ttsHelper.speak("Accessibility service is not running.")
-                    }
-                }
-                "globalHome" -> {
-                    val accService = com.example.service.VisionPilotAccessibilityService.getInstance()
-                    if (accService != null) {
-                        accService.performGlobalActionCode(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
-                        ttsHelper.speak("Going to home screen.")
-                    } else {
-                        ttsHelper.speak("Accessibility service is not running.")
-                    }
-                }
-                "globalBack" -> {
-                    val accService = com.example.service.VisionPilotAccessibilityService.getInstance()
-                    if (accService != null) {
-                        accService.performGlobalActionCode(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-                        ttsHelper.speak("Going back.")
-                    } else {
-                        ttsHelper.speak("Accessibility service is not running.")
-                    }
-                }
-                "adjustVolume" -> {
-                    val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
-                    val maxTarget = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
-                    val current = audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
-                    var newVol = current
-                    if (parsed.volumeLevel >= 0) {
-                        newVol = (parsed.volumeLevel / 100f * maxTarget).toInt()
-                    } else if (parsed.volumeDirection == "up") {
-                        newVol = (current + maxTarget / 5).coerceAtMost(maxTarget)
-                    } else if (parsed.volumeDirection == "down") {
-                        newVol = (current - maxTarget / 5).coerceAtLeast(0)
-                    } else if (parsed.volumeDirection == "max") {
-                        newVol = maxTarget
-                    } else if (parsed.volumeDirection == "mute") {
-                        newVol = 0
-                    }
-                    audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, newVol, android.media.AudioManager.FLAG_SHOW_UI)
-                    ttsHelper.speak(if (parsed.volumeLevel >= 0) "Volume set to ${parsed.volumeLevel} percent." else "Volume adjusted.")
-                }
-                "startTutorial" -> {
-                    ttsHelper.speak("Welcome to the Vision Pilot tutorial. I can help you navigate your device. Try saying 'read my screen', 'scroll down', 'go home', 'call an emergency contact', 'set an alarm', or 'increase volume'. If you have hands-free mode enabled, just say 'hello' to wake me. Tap the screen anytime to stop.")
-                }
-                "none" -> {
-                    triggerHapticFeedback(3)
-                    ttsHelper.speak(parsed.responseSpeech)
-                }
-                else -> {
-                    triggerHapticFeedback(2)
-                    ttsHelper.speak("Action recognized but no system handler found. ${parsed.responseSpeech}")
-                }
-            }
-            if (parsed.action != "none" && parsed.action != "whatsapp" && parsed.action != "clear logs") {
-                triggerHapticFeedback(2)
-            }
         }
     }
 
@@ -956,8 +818,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ttsHelper.speak("Voice input cancelled.")
     }
 
-    fun typeSimulatedVoiceQuery(text: String) {
+    fun updateManualInputText(text: String) {
         _spokenInputText.value = text
+    }
+
+    fun submitManualVoiceQuery() {
+        val text = _spokenInputText.value
+        if (text.isNotBlank()) {
+            handleVoiceDataInput(text)
+        }
     }
 
     private fun startListeningWave() {
@@ -980,17 +849,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun runScreenAnalysis() {
         viewModelScope.launch {
             _screenshotProcessing.value = true
-            ttsHelper.speak("Extracting active user interface hierarchy and running AI confidence mapping.")
-            delay(1500) // fake computation
-
-            _detectedUiElements.value = listOf(
-                DetectedUiElement("Button", "Send message item", 120, 850, 420, 920, 0.96),
-                DetectedUiElement("Button", "Call Mom contact action", 500, 850, 800, 920, 0.94),
-                DetectedUiElement("Text", "WhatsApp configuration settings", 80, 150, 600, 210, 0.99),
-                DetectedUiElement("Input", "Compose box container", 60, 400, 900, 520, 0.91)
-            )
+            ttsHelper.speak("Extracting active user interface hierarchy.")
+            
+            val accService = com.example.service.VisionPilotAccessibilityService.getInstance()
+            if (accService != null) {
+                val nodes = accService.extractUiHierarchy()
+                val actionableNodes = accService.filterActionableNodes(nodes)
+                
+                if (nodes.isEmpty()) {
+                    ttsHelper.speak("No interface nodes detected or accessibility service is blocked on this screen.")
+                    _detectedUiElements.value = emptyList()
+                    _screenshotProcessing.value = false
+                    return@launch
+                }
+                
+                val elementsList = mutableListOf<com.example.data.service.DetectedUiElement>()
+                val itemsToTake = if (actionableNodes.isNotEmpty()) actionableNodes.take(15) else nodes.filter { !it.text.isNullOrBlank() }.take(15)
+                
+                for (node in itemsToTake) {
+                    val fallbackTitle = node.text ?: node.className.substringAfterLast('.')
+                    elementsList.add(
+                        com.example.data.service.DetectedUiElement(
+                            type = if (node.isClickable) "Button" else "View",
+                            label = fallbackTitle,
+                            left = node.bounds.left,
+                            top = node.bounds.top,
+                            right = node.bounds.right,
+                            bottom = node.bounds.bottom,
+                            confidence = 1.0
+                        )
+                    )
+                }
+                
+                _detectedUiElements.value = elementsList
+                ttsHelper.speak("Identified ${elementsList.size} interactive elements on user screen.")
+            } else {
+                ttsHelper.speak("Accessibility service is not running or not allowed.")
+                _detectedUiElements.value = emptyList()
+            }
             _screenshotProcessing.value = false
-            ttsHelper.speak("Identified four active interface nodes on user screen.")
         }
     }
 
@@ -1054,16 +951,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Settings actions toggles
     fun toggleDarkMode() {
         _isDarkMode.value = !_isDarkMode.value
-        ttsHelper.speak("Dark theme toggled ${if (_isDarkMode.value) "on" else "off"}.")
+        sharedPreferences.edit().putBoolean("oled_high_contrast", _isDarkMode.value).apply()
+        ttsHelper.speak("High contrast OLED theme toggled ${if (_isDarkMode.value) "on" else "off"}.")
     }
 
     fun toggleAccessibility() {
-        _isAccessibilityEnabled.value = !_isAccessibilityEnabled.value
-        ttsHelper.speak("Accessibility screen reading integrations toggled.")
+        if (!_isAccessibilityActive.value) {
+            ttsHelper.speak("Opening accessibility settings. Please find Vision Pilot and toggle it on.")
+            try {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                getApplication<Application>().startActivity(intent)
+            } catch (e: Exception) {
+                // Ignore if not supported
+            }
+        } else {
+            ttsHelper.speak("Accessibility service is already active.")
+        }
     }
 
     fun setSpeechRate(rate: Float) {
         _speechRate.value = rate
+        sharedPreferences.edit().putFloat("speech_rate", rate).apply()
         ttsHelper.setSpeechRate(rate)
     }
 
@@ -1091,11 +1001,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isCameraGranted.value = androidx.core.content.ContextCompat.checkSelfPermission(
             context, android.Manifest.permission.CAMERA
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        cameraServiceStatus.value = if (_isCameraGranted.value) "RUNNING" else "STANDBY"
 
         // 2. Microphone (Record Audio) check
         _isRecordAudioGranted.value = androidx.core.content.ContextCompat.checkSelfPermission(
             context, android.Manifest.permission.RECORD_AUDIO
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        microphoneServiceStatus.value = if (_isRecordAudioGranted.value) "ONLINE" else "OFFLINE"
 
         // 3. Contacts check
         _isContactsGranted.value = androidx.core.content.ContextCompat.checkSelfPermission(
@@ -1104,6 +1016,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // 4. Accessibility Service check
         _isAccessibilityActive.value = isAccessibilityServiceEnabled(context)
+        screenCaptureServiceStatus.value = if (_isAccessibilityActive.value) "RUNNING" else "STANDBY"
 
         // 5. Overlay check
         _isOverlayGranted.value = android.provider.Settings.canDrawOverlays(context)
@@ -1129,27 +1042,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun triggerPermissionSync(context: android.content.Context) {
         updatePermissionsState()
-        
-        if (!_isOverlayGranted.value) {
-            ttsHelper.speak("Overlay permission is disabled. Opening Overlay settings page. Please find Vision Pilot and click allow display over other apps.")
-            try {
-                val intent = android.content.Intent(
-                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    android.net.Uri.parse("package:${context.packageName}")
-                ).apply {
-                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(intent)
-            } catch (e: Exception) {
-                try {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_SETTINGS).apply {
-                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                } catch (ex: Exception) {}
-            }
-            return
-        }
         
         if (!_isAccessibilityActive.value) {
             ttsHelper.speak("Accessibility automation is disabled. Opening settings. Please select installed services, find Vision Pilot, and toggle it on.")

@@ -136,6 +136,7 @@ open class CommandParser {
             - globalBack: to go back.
             - adjustVolume: increase, decrease, or set system volume. Extract 'volumeLevel' (0-100) if specified via percent or number, or 'volumeDirection' ("up", "down", "max", "mute").
             - startTutorial: start the interactive guide explaining available voice commands.
+            - addQuickCommand: if the user wants to add a new quick command for the home screen. Extract 'textToFind' as the command string to add (e.g. "open WhatsApp", "call Mom").
             - none: general query or unrecognized command.
             Verbally verify the task execution in 'responseSpeech'. Example: 'Opening YouTube.' or 'Timer set for medicine.'
         """.trimIndent()
@@ -155,7 +156,7 @@ open class CommandParser {
                             putJsonObject("properties") {
                                 putJsonObject("action") {
                                     put("type", "STRING")
-                                    put("description", "One of: call, whatsapp, alarm, setTimer, openApp, readScreen, clickText, scrollForward, scrollBackward, globalHome, globalBack, adjustVolume, startTutorial, none")
+                                    put("description", "One of: call, whatsapp, alarm, setTimer, openApp, readScreen, clickText, scrollForward, scrollBackward, globalHome, globalBack, adjustVolume, startTutorial, addQuickCommand, none")
                                 }
                                 putJsonObject("contactName") { put("type", "STRING") }
                                 putJsonObject("appName") { put("type", "STRING") }

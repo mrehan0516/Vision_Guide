@@ -336,15 +336,15 @@ fun LoginScreen(viewModel: MainViewModel) {
 
     // Phone states
     var phoneInput by remember { mutableStateOf("") }
+    var phoneInputError by remember { mutableStateOf<String?>(null) }
     var otpSentCode by remember { mutableStateOf<String?>(null) }
+    var verificationId by remember { mutableStateOf("") }
     var otpInput by remember { mutableStateOf("") }
+    var otpInputError by remember { mutableStateOf<String?>(null) }
     var isOtpVerifying by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
     val localContext = androidx.compose.ui.platform.LocalContext.current
-
-    // Google Choice list sheet dialog
-    var showGoogleChooser by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -413,7 +413,7 @@ fun LoginScreen(viewModel: MainViewModel) {
                         .clip(RoundedCornerShape(12.dp))
                         .background(if (isSelected) PrimaryNeonBlue else Color.Transparent)
                         .semantics { 
-                            contentDescription = "Select \$title authentication tab"
+                            contentDescription = "Select $title authentication tab"
                         }
                         .clickable {
                             activeAuthTab = index
@@ -580,9 +580,28 @@ fun LoginScreen(viewModel: MainViewModel) {
                                         viewModel.ttsHelper.speak("Password confirmations missmatch. Recheck security fields.")
                                         return@Button
                                     }
-                                    viewModel.createNewAccount(emailInput, nameInput.ifBlank { "User" })
+                                    
+                                    com.google.firebase.auth.FirebaseAuth.getInstance().createUserWithEmailAndPassword(emailInput, passwordInput)
+                                        .addOnCompleteListener { task ->
+                                            if (task.isSuccessful) {
+                                                val user = task.result?.user
+                                                viewModel.loginWithSession(user?.email ?: emailInput, nameInput.ifBlank { "User" }, "Secure Email Auth")
+                                                viewModel.ttsHelper.speak("Account registered successfully.")
+                                            } else {
+                                                viewModel.ttsHelper.speak("Registration failed: ${task.exception?.message ?: "Unknown error"}")
+                                            }
+                                        }
                                 } else {
-                                    viewModel.loginWithSession(emailInput, emailInput.substringBefore("@"), "Secure Email Auth")
+                                    com.google.firebase.auth.FirebaseAuth.getInstance().signInWithEmailAndPassword(emailInput, passwordInput)
+                                        .addOnCompleteListener { task ->
+                                            if (task.isSuccessful) {
+                                                val user = task.result?.user
+                                                viewModel.loginWithSession(user?.email ?: emailInput, user?.displayName ?: emailInput.substringBefore("@"), "Secure Email Auth")
+                                                viewModel.ttsHelper.speak("Login successful.")
+                                            } else {
+                                                viewModel.ttsHelper.speak("Login failed: ${task.exception?.message ?: "Unknown error"}")
+                                            }
+                                        }
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonBlue),
@@ -680,11 +699,35 @@ fun LoginScreen(viewModel: MainViewModel) {
                             Spacer(modifier = Modifier.width(8.dp))
                             OutlinedTextField(
                                 value = phoneInput,
-                                onValueChange = { phoneInput = it },
+                                onValueChange = { 
+                                    phoneInput = it
+                                    val digitsOnly = it.replace(Regex("[^0-9]"), "")
+                                    if (digitsOnly.isNotEmpty() && digitsOnly.length < 5) {
+                                        phoneInputError = "Phone number must be at least 5 digits"
+                                    } else if (digitsOnly.isNotEmpty() && digitsOnly.length > 15) {
+                                        phoneInputError = "Phone number cannot exceed 15 digits"
+                                    } else {
+                                        phoneInputError = null
+                                    }
+                                },
+                                isError = phoneInputError != null,
+                                supportingText = {
+                                    if (phoneInputError != null) {
+                                        Text(
+                                            text = phoneInputError!!,
+                                            color = WarningRed,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            modifier = Modifier.semantics { error(phoneInputError!!) }
+                                        )
+                                    }
+                                },
                                 label = { Text("Phone Number") },
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = PrimaryNeonBlue,
                                     unfocusedBorderColor = CardBorder,
+                                    errorBorderColor = WarningRed,
+                                    errorLabelColor = WarningRed,
+                                    errorSupportingTextColor = WarningRed,
                                     focusedLabelColor = PrimaryNeonBlue,
                                     unfocusedLabelColor = SlateMutedText,
                                     focusedTextColor = SlateLightText,
@@ -696,7 +739,12 @@ fun LoginScreen(viewModel: MainViewModel) {
                                 ),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("phone_input_field"),
+                                    .testTag("phone_input_field")
+                                    .semantics {
+                                        if (phoneInputError != null) {
+                                            error(phoneInputError!!)
+                                        }
+                                    },
                                 shape = RoundedCornerShape(12.dp)
                             )
                         }
@@ -706,14 +754,48 @@ fun LoginScreen(viewModel: MainViewModel) {
                         if (otpSentCode == null) {
                             Button(
                                 onClick = {
+                                    if (phoneInputError != null) {
+                                        viewModel.ttsHelper.speak("Invalid phone number format: $phoneInputError")
+                                        return@Button
+                                    }
                                     if (phoneInput.length < 5) {
                                         viewModel.ttsHelper.speak("Invalid phone digit length. Please enter valid phone layout.")
                                         return@Button
                                     }
                                     val fullPhone = selectedCountryCode + phoneInput
-                                    val randomCode = (1000..9999).random().toString()
-                                    otpSentCode = randomCode
-                                    viewModel.ttsHelper.speak("Simulated SMS gateway sent code to $fullPhone. Your secure authorization text verification pin is: $randomCode. Repeated for eye free entry, $randomCode.")
+                                    
+                                    val callbacks = object : com.google.firebase.auth.PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
+                                        override fun onVerificationCompleted(credential: com.google.firebase.auth.PhoneAuthCredential) {
+                                            com.google.firebase.auth.FirebaseAuth.getInstance().signInWithCredential(credential).addOnCompleteListener { task ->
+                                                if (task.isSuccessful) {
+                                                    val user = task.result?.user
+                                                    viewModel.loginWithSession(user?.phoneNumber ?: fullPhone, "Phone User", "Secure Phone Auth")
+                                                }
+                                            }
+                                        }
+
+                                        override fun onVerificationFailed(e: com.google.firebase.FirebaseException) {
+                                            viewModel.ttsHelper.speak("Phone verification failed: ${e.message ?: "Unknown error"}")
+                                        }
+
+                                        override fun onCodeSent(
+                                            verificationIdSent: String,
+                                            token: com.google.firebase.auth.PhoneAuthProvider.ForceResendingToken
+                                        ) {
+                                            verificationId = verificationIdSent
+                                            otpSentCode = "sent"
+                                            viewModel.ttsHelper.speak("Firebase SMS gateway sent code to $fullPhone.")
+                                        }
+                                    }
+
+                                    val options = com.google.firebase.auth.PhoneAuthOptions.newBuilder(com.google.firebase.auth.FirebaseAuth.getInstance())
+                                        .setPhoneNumber(fullPhone)
+                                        .setTimeout(60L, java.util.concurrent.TimeUnit.SECONDS)
+                                        .setActivity(localContext as android.app.Activity)
+                                        .setCallbacks(callbacks)
+                                        .build()
+                                    com.google.firebase.auth.PhoneAuthProvider.verifyPhoneNumber(options)
+
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = CardBorder),
                                 modifier = Modifier
@@ -733,11 +815,33 @@ fun LoginScreen(viewModel: MainViewModel) {
 
                             OutlinedTextField(
                                 value = otpInput,
-                                onValueChange = { otpInput = it },
+                                onValueChange = { 
+                                    otpInput = it
+                                    val digitsOnly = it.replace(Regex("[^0-9]"), "")
+                                    if (digitsOnly.length != 6) {
+                                        otpInputError = "Verification code must be exactly 6 digits"
+                                    } else {
+                                        otpInputError = null
+                                    }
+                                },
+                                isError = otpInputError != null,
+                                supportingText = {
+                                    if (otpInputError != null) {
+                                        Text(
+                                            text = otpInputError!!,
+                                            color = WarningRed,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            modifier = Modifier.semantics { error(otpInputError!!) }
+                                        )
+                                    }
+                                },
                                 label = { Text("Security Verification Pin") },
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = PrimaryNeonBlue,
                                     unfocusedBorderColor = CardBorder,
+                                    errorBorderColor = WarningRed,
+                                    errorLabelColor = WarningRed,
+                                    errorSupportingTextColor = WarningRed,
                                     focusedLabelColor = PrimaryNeonBlue,
                                     unfocusedLabelColor = SlateMutedText,
                                     focusedTextColor = SlateLightText,
@@ -749,7 +853,12 @@ fun LoginScreen(viewModel: MainViewModel) {
                                 ),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("otp_code_field"),
+                                    .testTag("otp_code_field")
+                                    .semantics {
+                                        if (otpInputError != null) {
+                                            error(otpInputError!!)
+                                        }
+                                    },
                                 shape = RoundedCornerShape(12.dp)
                             )
 
@@ -757,12 +866,21 @@ fun LoginScreen(viewModel: MainViewModel) {
 
                             Button(
                                 onClick = {
-                                    if (otpInput == otpSentCode) {
-                                        val fullPhone = selectedCountryCode + phoneInput
-                                        viewModel.loginWithPhone(fullPhone)
-                                    } else {
-                                        viewModel.ttsHelper.speak("OTP Verification code mismatch. Re-verify the announced pin.")
+                                    if (otpInputError != null || otpInput.length != 6) {
+                                        viewModel.ttsHelper.speak("Invalid verification code format. The code must be exactly 6 digits.")
+                                        return@Button
                                     }
+                                    val credential = com.google.firebase.auth.PhoneAuthProvider.getCredential(verificationId, otpInput)
+                                    com.google.firebase.auth.FirebaseAuth.getInstance().signInWithCredential(credential)
+                                        .addOnCompleteListener { task ->
+                                            if (task.isSuccessful) {
+                                                val fullPhone = selectedCountryCode + phoneInput
+                                                viewModel.loginWithSession(fullPhone, "Phone User", "Secure Phone Auth")
+                                                viewModel.ttsHelper.speak("Phone authentication successful.")
+                                            } else {
+                                                viewModel.ttsHelper.speak("Invalid verification code: ${task.exception?.message ?: "Unknown error"}")
+                                            }
+                                        }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonBlue),
                                 modifier = Modifier
@@ -843,28 +961,28 @@ fun LoginScreen(viewModel: MainViewModel) {
                                         val credential = result.credential
                                         if (credential is androidx.credentials.CustomCredential && credential.type == com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                                             val googleIdTokenCredential = com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.createFrom(credential.data)
+                                            val idToken = googleIdTokenCredential.idToken
                                             val email = googleIdTokenCredential.id
                                             val name = googleIdTokenCredential.displayName ?: "Google User"
-                                            val idToken = googleIdTokenCredential.idToken
+
                                             com.example.auth.FirebaseAuthManager.signInWithGoogle(idToken, onSuccess = { firebaseUser ->
                                                 val fName = firebaseUser.displayName ?: name
                                                 val fEmail = firebaseUser.email ?: email
                                                 viewModel.loginWithSession(fEmail, fName, "Real Google Account Link")
                                                 viewModel.ttsHelper.speak("Successfully linked to Google Cloud.")
                                             }, onFailure = {
-                                                // Fallback to local session
-                                                viewModel.loginWithSession(email, name, "Real Google Account Link")
-                                                viewModel.ttsHelper.speak("Successfully linked to Google Account Locally (Firebase unavailable).")
+                                                viewModel.loginWithSession(email, name, "Fallback Google Sign In")
+                                                viewModel.ttsHelper.speak("Firebase signin failed. Utilizing manual credential.")
                                             })
                                         } else {
                                             viewModel.ttsHelper.speak("Unknown credential type returned.")
                                         }
                                     } catch (e: Exception) {
-                                        viewModel.ttsHelper.speak("Real Google Sign In failed. Make sure to configure the Google Web Client ID in the Settings configuration variables.")
+                                        viewModel.ttsHelper.speak("Google Sign In failed. Ensure GOOGLE_WEB_CLIENT_ID is properly configured.")
                                     }
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonBlue),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(52.dp)
@@ -1019,6 +1137,25 @@ fun DashboardHome(viewModel: MainViewModel, onNavigate: (String) -> Unit) {
     val isAccEnabled by viewModel.isAccessibilityEnabled.collectAsState()
     val isHandsFree by viewModel.isHandsFreeMode.collectAsState()
     val wakeWordState by viewModel.wakeWordState.collectAsState()
+    val context = LocalContext.current
+
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        viewModel.updatePermissionsState()
+        viewModel.triggerPermissionSync(context)
+    }
+
+    LaunchedEffect(Unit) {
+        permissionLauncher.launch(
+            arrayOf(
+                android.Manifest.permission.CAMERA,
+                android.Manifest.permission.RECORD_AUDIO,
+                android.Manifest.permission.READ_CONTACTS,
+                android.Manifest.permission.CALL_PHONE
+            )
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -1314,7 +1451,7 @@ fun DashboardHome(viewModel: MainViewModel, onNavigate: (String) -> Unit) {
                 Spacer(modifier = Modifier.height(16.dp))
                 OutlinedTextField(
                     value = speakInput,
-                    onValueChange = { viewModel.typeSimulatedVoiceQuery(it) },
+                    onValueChange = { viewModel.updateManualInputText(it) },
                     placeholder = { Text("Or enter command text manually here...") },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = SlateLightText,
@@ -1328,7 +1465,18 @@ fun DashboardHome(viewModel: MainViewModel, onNavigate: (String) -> Unit) {
                         .fillMaxWidth()
                         .heightIn(min = 50.dp)
                         .testTag("manual_command_input"),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Send
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSend = { viewModel.submitManualVoiceQuery() }
+                    ),
+                    trailingIcon = {
+                        IconButton(onClick = { viewModel.submitManualVoiceQuery() }) {
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send Command", tint = PrimaryNeonBlue)
+                        }
+                    }
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -1446,25 +1594,20 @@ fun DashboardHome(viewModel: MainViewModel, onNavigate: (String) -> Unit) {
             modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
         )
 
-        val commands = listOf(
-            Pair("Call Mom", Icons.Default.Phone),
-            Pair("Open WhatsApp", Icons.Default.Sms),
-            Pair("Read this screen", Icons.Default.ScreenSearchDesktop),
-            Pair("Describe surroundings", Icons.Default.Cameraswitch)
-        )
+        val dynamicCommands by viewModel.quickCommands.collectAsState()
 
         Column(modifier = Modifier.fillMaxWidth()) {
-            commands.forEach { (cmdText, icon) ->
+            dynamicCommands.forEach { cmdText ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 6.dp)
                         .semantics { 
-                            contentDescription = "Execute quick command: \$cmdText"
+                            contentDescription = "Execute quick command: $cmdText"
                         }
                         .clickable {
-                            viewModel.typeSimulatedVoiceQuery(cmdText)
-                            viewModel.toggleAssistantListening()
+                            viewModel.updateManualInputText(cmdText)
+                            viewModel.submitManualVoiceQuery()
                         },
                     colors = CardDefaults.cardColors(containerColor = CardSlate),
                     shape = RoundedCornerShape(16.dp)
@@ -1483,7 +1626,7 @@ fun DashboardHome(viewModel: MainViewModel, onNavigate: (String) -> Unit) {
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = icon,
+                                imageVector = Icons.Default.Bolt,
                                 contentDescription = null,
                                 tint = SecondaryNeonCyan,
                                 modifier = Modifier.size(20.dp)
@@ -2632,10 +2775,14 @@ fun DevicesPage(viewModel: MainViewModel) {
             modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
         )
 
+        val screenState by viewModel.screenCaptureServiceStatus.collectAsState()
+        val micState by viewModel.microphoneServiceStatus.collectAsState()
+        val camState by viewModel.cameraServiceStatus.collectAsState()
+
         val devices = listOf(
-            Triple("Media Screen capture API", "Active standard screen recording frame dispatcher", "RUNNING"),
-            Triple("Vocal Mic Microphone Feed", "Speex compression sound processor channel", "ONLINE"),
-            Triple("Focal Camera Scanner", "Back lens optical capture preview camera", "STANDBY")
+            Triple("Media Screen capture API", "Active standard screen recording frame dispatcher", screenState),
+            Triple("Vocal Mic Microphone Feed", "Speex compression sound processor channel", micState),
+            Triple("Focal Camera Scanner", "Back lens optical capture preview camera", camState)
         )
 
         devices.forEach { (name, info, state) ->
@@ -2643,7 +2790,10 @@ fun DevicesPage(viewModel: MainViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 6.dp)
-                    .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
+                    .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
+                    .clickable { 
+                        viewModel.ttsHelper.speak("This is an informational setting for $name. Please manage permissions in your Android OS standard settings app.")
+                    },
                 colors = CardDefaults.cardColors(containerColor = CardSlate),
                 shape = RoundedCornerShape(16.dp)
             ) {
@@ -2693,7 +2843,7 @@ fun DevicesPage(viewModel: MainViewModel) {
 @Composable
 fun ProfilePage(viewModel: MainViewModel) {
     val isDarkMode by viewModel.isDarkMode.collectAsState()
-    val isAccEnabled by viewModel.isAccessibilityEnabled.collectAsState()
+    val isAccEnabled by viewModel.isAccessibilityActive.collectAsState()
     val speechRate by viewModel.speechRate.collectAsState()
     val speechPitch by viewModel.speechPitch.collectAsState()
     val selectedVoice by viewModel.selectedVoice.collectAsState()

@@ -49,6 +49,15 @@ class OverlayBoundingBoxView(context: Context) : View(context) {
     }
 }
 
+data class UiElement(
+    val className: String,
+    val text: String?,
+    val centerX: Int,
+    val centerY: Int,
+    val isClickable: Boolean,
+    val isScrollable: Boolean
+)
+
 class VisionPilotAccessibilityService : AccessibilityService() {
 
     private var windowManager: WindowManager? = null
@@ -114,6 +123,19 @@ class VisionPilotAccessibilityService : AccessibilityService() {
         val nodeList = mutableListOf<AccessibilityNodeData>()
         traverseAndCollect(rootNode, nodeList)
         return nodeList
+    }
+    
+    fun readUiTree(): List<UiElement> {
+        return extractUiHierarchy().map { 
+            UiElement(
+                className = it.className,
+                text = it.text,
+                centerX = it.bounds.centerX(),
+                centerY = it.bounds.centerY(),
+                isClickable = it.isClickable,
+                isScrollable = it.isScrollable
+            )
+        }
     }
     
     fun describeAppContent(): String {

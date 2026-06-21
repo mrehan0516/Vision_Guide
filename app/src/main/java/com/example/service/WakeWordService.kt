@@ -56,12 +56,18 @@ class WakeWordService : Service() {
     private fun startListening() {
         if (isListening) return
 
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            Log.e("WakeWordService", "RECORD_AUDIO permission not granted")
+            stopSelf()
+            return
+        }
+
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             Log.e("WakeWordService", "Speech recognition not available")
             return
         }
 
-        speechRecognizer = java.lang.ref.WeakReference(SpeechRecognizer.createSpeechRecognizer(this)).get()
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -79,6 +85,11 @@ class WakeWordService : Service() {
             override fun onError(error: Int) {
                 isListening = false
                 Log.d("WakeWordService", "Error: \$error. Restarting...")
+                if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                    Log.e("WakeWordService", "Insufficient permissions. Stopping service.")
+                    stopSelf()
+                    return
+                }
                 restartListeningSafely()
             }
 
