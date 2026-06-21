@@ -172,20 +172,93 @@ This isn't just accessibility software. It's **independence as a service.**
 
 ## 🛠️ Running Locally
 
-**Prerequisites:** [Android Studio](https://developer.android.com/studio)
+### Prerequisites
+
+- [Android Studio](https://developer.android.com/studio) (Ladybug or newer recommended)
+- Python 3.10+ (for backend)
+- A [Gemini API key](https://aistudio.google.com/apikey) (free tier works)
+- A `google-services.json` from your Firebase project (for Firebase AI SDK)
+
+### Step 1 — Clone the repo
+
+```bash
+git clone https://github.com/mrehan0516/Vision_Guide.git
+cd Vision_Guide
+```
+
+### Step 2 — Set up the Gemini API key
+
+Create a `.env` file in the project root (same level as `settings.gradle.kts`):
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and replace the placeholder with your real key:
+
+```
+GEMINI_API_KEY=your_actual_gemini_api_key_here
+```
+
+This key is used by both the Android app (via the Secrets Gradle Plugin) and the Python backend.
+
+### Step 3 — Firebase setup
+
+Place your `google-services.json` file in the `app/` directory. You can get this from your [Firebase Console](https://console.firebase.google.com/) → Project Settings → General → Your Apps → Download `google-services.json`.
+
+### Step 4 — Run the Android app
 
 1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Run the app on an emulator or physical device
+2. Select **Open** and choose the `Vision_Guide` directory
+3. Let Gradle sync complete (it will download all dependencies automatically)
+4. If you see a signing config error, remove this line from `app/build.gradle.kts`:
+   ```
+   signingConfig = signingConfigs.getByName("debugConfig")
+   ```
+5. Connect a physical Android device (recommended — accessibility features work best on real devices) or start an emulator
+6. Click **Run** (green play button) or press `Shift+F10`
 
-**Backend:**
+> **Note:** The app uses a `MockVisionPilotClient` by default, so it works without the backend running. The mock simulates the full agent plan → step → confirm flow for demo purposes.
+
+### Step 5 — Run the backend (optional, for full Gemini-powered agent)
+
 ```bash
 cd backend
-pip install -r requirements.txt
+pip install fastapi uvicorn google-generativeai pydantic
+```
+
+Set the API key in your terminal:
+
+```bash
+export GEMINI_API_KEY=your_actual_gemini_api_key_here
+```
+
+Start the server:
+
+```bash
 python main.py
 ```
+
+The backend runs on `http://localhost:8000`. API docs are available at `http://localhost:8000/docs`.
+
+### Step 6 — Run the hardware simulation (no hardware needed)
+
+```bash
+cd hardware/tests
+python hil_simulation.py --verbose
+```
+
+This runs the full 22-test HIL validation suite and outputs results to `hil_results.json`.
+
+### Quick reference — what runs where
+
+| Component | How to run | Needs hardware? |
+|---|---|---|
+| Android app (mock mode) | Android Studio → Run | No (phone or emulator) |
+| Android app (live agent) | Android Studio → Run + backend on | No (phone + laptop) |
+| Backend API | `python main.py` | No |
+| Hardware simulation | `python hil_simulation.py` | No |
+| Haptic vest firmware | `./haptic_vest` (on RPi4) | Yes (RPi4 + cameras + motors) |
 
 ---
 
